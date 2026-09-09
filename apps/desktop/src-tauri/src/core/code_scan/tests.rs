@@ -119,6 +119,7 @@ mod database_operations;
 mod dependency_ranges;
 mod laravel_routes;
 mod postgres_live;
+mod redirect_guards;
 mod release_age_policy;
 mod reporting;
 mod route_detection;

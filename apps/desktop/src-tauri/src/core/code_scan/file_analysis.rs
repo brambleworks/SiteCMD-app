@@ -4,6 +4,7 @@ mod architecture_checks;
 mod js_sinks;
 mod php_sinks;
 mod python_sinks;
+mod redirect_guards;
 mod route_security;
 mod service_security;
 mod signals;

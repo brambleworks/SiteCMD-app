@@ -295,9 +295,16 @@ impl FileAnalysisSignals {
             has_any(content, &USER_CONTROLLED_STRIPE_PRICE_PATTERNS);
         let has_redirect_sink = has_any(content, &REDIRECT_SINK_PATTERNS);
         let has_user_controlled_redirect = has_any(content, &USER_CONTROLLED_REDIRECT_PATTERNS);
-        let has_redirect_allowlist = has_any(content, &REDIRECT_ALLOWLIST_PATTERNS);
         let has_user_controlled_stripe_redirect =
             has_any(content, &USER_CONTROLLED_STRIPE_REDIRECT_PATTERNS);
+        let has_redirect_allowlist = if is_js_source_path(&file.relative_path) {
+            route_like
+                && ((has_redirect_sink && has_user_controlled_redirect)
+                    || (uses_stripe_checkout && has_user_controlled_stripe_redirect))
+                && super::redirect_guards::has_guarded_redirects(content, uses_stripe_checkout)
+        } else {
+            has_any(content, &REDIRECT_ALLOWLIST_PATTERNS)
+        };
         let has_stripe_price_allowlist = has_any(content, &STRIPE_PRICE_ALLOWLIST_PATTERNS);
         let has_email_flow = has_any(content, &EMAIL_PATTERNS);
         let user_controlled_fetch = route_like && ssrf_like && !has_ssrf_guard;
