@@ -133,7 +133,7 @@
         "checkId": "code_scan.cors-credentials-wildcard",
         "relativePath": "lightrag/api/lightrag_server.py",
         "fingerprint": "sha256:7f53e1eef08acdfbe736f01e4550a311c8e3a14b55b2e70a6f3183092e0ca010",
-        "sourceAnchor": "allow_origins=get_cors_origins(),"
+        "sourceAnchor": "def get_cors_origins():"
       }
     },
     {
@@ -162,7 +162,7 @@
         "checkId": "code_scan.cors-credentials-wildcard",
         "relativePath": "glances/outputs/glances_restful_api.py",
         "fingerprint": "sha256:99182f5a0f69d02791082b75689a6f1d8af377cfda46d5233d3ef0ba1778243f",
-        "sourceAnchor": "allow_credentials=config.get_bool_value('outputs', 'cors_credentials', default=True)"
+        "sourceAnchor": "allow_origins=config.get_list_value('outputs', 'cors_origins', default=[\"*\"]),"
       }
     },
     {
