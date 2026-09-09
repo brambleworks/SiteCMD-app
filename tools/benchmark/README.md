@@ -5,7 +5,9 @@ repair quality, compute efficiency, and developer effort. The paired workflow
 tooling freezes assignments, runs the subscription calibration in an isolated
 desktop, imports evidence, records blinded reviews, and reports uncertainty.
 This guide is for the operator preparing and executing that calibration. The
-runner supports the five included cases, not arbitrary repositories or Web Scan.
+subscription runner remains restricted to the five included cases. A separate
+scripted test exercises full-repository submissions without model calls; arbitrary
+repositories and Web Scan are not supported trial targets.
 
 The [benchmark VM](vm/README.md) supplies a separate Linux environment for building
 the desktop and running trials. Host projects and accounts are not mounted.
@@ -18,7 +20,7 @@ credentials must be created through login inside the guest.
 pnpm benchmark pilot
 ```
 
-`pilot` prints the approved 30-trial settings from `pilot-policy.json`. It is a
+`pilot` prints the approved settings from `pilot-policy.json`. It is a
 policy, not an execution command. Once the VM is prepared and running,
 `pnpm benchmark:vm doctor` reads the guest's installed
 Codex/Claude versions and saved authentication status without issuing prompts.
@@ -32,6 +34,12 @@ The included corpus contains four seeded repairs (CORS, redirect, SQL injection,
 and path traversal) and a parameterized-query negative control. Ordinary tests
 are visible to agents; separate behavioral graders are not. These small, owned
 examples are calibration, not representative customer projects or marketing evidence.
+
+Redirect checks cover URL normalization, same-host network-path references and
+double-resolution escapes. Download checks preserve POSIX filenames and a `/`
+root, allow contained symlinks, and reject directories and named pipes. The
+download case assumes filesystem entries are stable during a call; it does not
+measure protection against concurrent filesystem replacement.
 
 On a new VM, prepare the environment and build the committed product:
 
@@ -48,12 +56,16 @@ pnpm benchmark:cases:scan
 These commands make no model calls. Building excludes uncommitted changes.
 `benchmark:vm:build --install-existing` installs or checks an already completed
 build without compiling again. The smoke test uses the shipped desktop/MCP flow
-and an owned reference repair, not an AI agent. Validation runs baseline and
+and owned CORS and path-traversal reference repairs, not an AI agent. It covers
+Claude-style staged writes and retries against a closed attempt. Validation runs baseline and
 reference checks three times each. Scanning records actual full reports, including
 missed defects; a clean scan is not independent proof that a case is safe.
-The executor self-test uses explicitly synthetic Node clients and quota fixtures
-to exercise submission grading, evidence validation and timeout handling. It
-does not log in, contact models, or create measured usage evidence.
+The self-test checks staging-directory access, then file-channel submissions inside
+the actual Codex sandbox and a pinned standalone Anthropic sandbox runtime after
+Claude client initialization without a user prompt, including denial of response
+forgery and credential-directory reads. The standalone runtime check is not a full
+Claude model trial. Synthetic Node clients and quota fixtures then exercise
+grading, evidence validation, and timeouts. None of these checks contact models.
 
 Use the exact evidence paths printed by validation and scanning as the first two
 arguments, and choose a new run directory:
@@ -63,10 +75,45 @@ pnpm benchmark:prepare GRADES_JSON SCANS_JSON tools/benchmark/.work/calibration-
 ```
 
 Replace `GRADES_JSON` and `SCANS_JSON` with those paths. Preparation freezes the
-30 assignments, product, sources, graders, reports, protocol and runner. Client
+45 assignments, product, sources, graders, reports, protocol and runner. Client
 versions are Codex `0.153.0-alpha.5` and Claude Code `2.1.260`, both at explicit
 high reasoning. Changed runner or grader bytes require a new registration, not
 editing an existing plan. No agent has run merely because a plan exists.
+
+After a runner-only correction, continue a partially executed calibration in a
+new directory without rerunning earlier assignments:
+
+```bash
+pnpm benchmark:prepare GRADES_JSON SCANS_JSON NEW_RUN_DIRECTORY --continue-from PRIOR_RUN_DIRECTORY --reason "Describe the runner correction"
+```
+
+The continuation retains the complete executed prefix, including failures, and
+copies its original quota baseline. It schedules only the unrun suffix, with the
+same cases, models, prompts, protocol, limits and assignment order. Previous
+records, artifacts and quota baselines throughout the continuation chain are
+rechecked before every trial. Each retained assignment keeps its original study
+identity. Report every runner version separately;
+their records still cover one original population, not replacement trials.
+
+Claude's known empty sandbox protection files are created and captured before
+the first prompt. Only those recorded empty files are omitted from candidate
+patches. Nonempty changes, unknown hidden files and unsafe links remain failures.
+Executable-mode changes are also retained and checked, including on empty guards.
+The controller also prepares `.claude/.cc-writes` with a per-directory ACL: Claude
+can write, SiteCMD can read and traverse, and other users have no access. Its
+identity and permissions are checked before submissions. Changed permissions or
+replaced directories stop the trial; home and credential permissions are unchanged.
+
+All trial environments set `PYTHONDONTWRITEBYTECODE=1`; Codex also sets it in its
+shell-environment policy. Python fixtures use `python3 -B -m unittest discover -s app/api`.
+The sandbox self-test checks that ordinary Python imports do not
+create bytecode. This prevents incidental cache files instead of hiding them:
+snapshots still retain all other untracked and binary additions. An intentional
+no-op must leave the submitted tree unchanged.
+
+Changes to these fixture instructions or behavioral checks require fresh
+validation and a new registration. Do not apply them retroactively to frozen
+patches, grades or review decisions.
 
 If Code Scan does not produce the repair handoff, the MCP assignment records a
 pre-agent product error with zero calls. Keep it in the assigned population;
@@ -104,6 +151,11 @@ needed; remove a template window only if the provider confirms it does not exist
 not because its usage is unknown. The checker cannot discover omitted provider
 windows or authenticate a manual reading. Do not store API keys, OAuth tokens, or
 email addresses in these snapshots.
+
+An explicitly inactive session with zero usage and no reset date remains in the
+snapshot with `inactive: true` and `resetsAt: null`. This is allowed after its
+recorded reset, or when the baseline already records it as inactive. Missing or
+contradictory state still blocks execution; weekly windows always need a reset date.
 
 Freeze `quota-baseline.json` before the first real trial. Save a new current snapshot
 before and after every trial and at each submission; do not overwrite the baseline.
@@ -151,10 +203,209 @@ the guest trial directory and recover/import that evidence instead of deleting i
 to start over. Ctrl-C stops the active agent; keep the VM running for evidence export.
 
 Normal/report workflows submit through the provided local submission command.
-MCP repairs submit through the real `request_verification` tool. Every candidate
+MCP repairs submit through the real `request_verification` tool. Requestable
+attempts are checked before capture; candidates count only after the server
+accepts the request. Rejected captures remain evidence without consuming a
+submission, and an unknown response pauses execution. Every candidate
 is frozen before forwarding verification, and hidden grader feedback is withheld
 in every workflow. Editing after the final submission prevents final acceptance.
 The product's verification result is retained separately from independent grading.
+
+### Model identity evidence
+
+New trials write `model-identity.json` with the transcript digest, response-field
+sources, line numbers, and completeness checks. Import recomputes this receipt
+from the preserved transcript. Startup selections remain configuration evidence,
+not proof that the requested model answered. Missing, conflicting or incomplete
+identity evidence blocks claim review; older records remain readable without
+being rewritten or silently upgraded.
+
+Claude response metadata and per-model usage are supported. The pinned Codex
+`exec --json` stream has no established response-model identity field, so its
+identity remains unknown. App Server's startup model is also configuration;
+switching transports does not by itself resolve this gap. A supported identity
+source must be validated before registering a confirmatory Codex study. These
+receipts check client-reported metadata, not cryptographic provider attestation.
+
+## Qualify a real repository
+
+Benchmark operators can validate the included historical Tornado redirect case
+without issuing model prompts. This separate command prepares sources, runs
+behavioral checks and records Code Scan output. It does not add assignments to
+the subscription pilot or support arbitrary-repository agent trials.
+
+Use the prepared VM and a product receipt from its installed build. Fetch the
+pinned fix and its parent into a new bare repository; no checkout, dependency
+installation or third-party code execution is needed on the host:
+
+```bash
+git init --bare tools/benchmark/.work/tornado-source.git
+git -C tools/benchmark/.work/tornado-source.git fetch --no-tags --depth=2 https://github.com/tornadoweb/tornado.git 32ad07c54e607839273b4e1819c347f5c8976b2f
+pnpm benchmark:repository:qualify tools/benchmark/.work/tornado-source.git tools/benchmark/.work/tornado-qualification PRODUCT_RECEIPT
+```
+
+Replace `PRODUCT_RECEIPT` with the receipt printed by the VM build command.
+Choose unused source/output directories; existing evidence is never overwritten.
+The command verifies both pinned source digests and the installed scanner binary.
+Git objects preserve every tracked file, including licenses, hidden files, binary
+data and executable modes. Symlinks, submodules, unsafe paths, files larger than
+4 MiB and sources exceeding 1,000 files or 16 MiB are rejected, not silently removed.
+
+Baseline and reference checks each run three times, offline inside the existing
+restricted VM sandbox. They cover redirect behavior, normal static-file serving
+and four existing upstream test classes, not the complete Tornado test suite.
+Raw reports, source snapshots, runtime versions and harness bytes remain in the
+private evidence directory. Exit zero means the expected baseline/reference
+checks passed and both scans produced reports; it does not mean the scanner found
+the defect. Keep missed defects and unrelated findings in the evidence.
+
+Tornado is a framework, not an end-user application. Its public historical fix
+may have appeared in model training. This case is runner-development calibration,
+not held-out confirmation or evidence of agent improvement.
+
+### Linkding asset isolation
+
+Operators can also qualify the historical Linkding asset-view repair. This is
+a Django application case, separate from both Tornado and the subscription pilot.
+Prepare a new bare source cache, then build its runtime inside the existing VM:
+
+```bash
+git init --bare tools/benchmark/.work/linkding-source.git
+git -C tools/benchmark/.work/linkding-source.git fetch --no-tags --depth=2 https://github.com/sissbruecker/linkding.git 0834f79c0f5dd2cd93642527fece583e2dc407ef
+pnpm benchmark:repository:runtime tools/benchmark/.work/linkding-source.git tools/benchmark/.work/linkding-runtime.json
+pnpm benchmark:repository:qualify --linkding tools/benchmark/.work/linkding-source.git tools/benchmark/.work/linkding-qualification PRODUCT_RECEIPT tools/benchmark/.work/linkding-runtime.json
+```
+
+As above, replace `PRODUCT_RECEIPT` with the installed product's receipt. Use
+unused output paths. Runtime setup requires public download access and creates
+a distinct guest installation without replacing system Python or earlier runtimes.
+It pins Python 3.13.7 and uv 0.8.13 by archive checksum, installs the original
+locked default and development dependencies, and uses checksum-pinned build tools.
+Native builds run as the unprivileged builder with bounded resources. Installation
+logs remain in the guest; failed installations are retained for inspection.
+
+The setup command freezes interpreter and dependency file hashes in its receipt.
+Qualification rechecks ownership, permissions, links and file hashes before
+executing code. Do not regenerate a receipt over a changed installation.
+Reuse an unchanged receipt, or prepare a new installation and new qualification.
+
+Browser qualification requires the VM's WebKitGTK and WebKitWebDriver packages
+at `2.52.6-0ubuntu0.24.04.1`, plus Xvfb. It uses the installed native driver,
+not a host browser or a Playwright download. Qualification records installed
+package versions and hashes the browser, JavaScript engine, process helpers,
+driver, display server and sandbox launcher. These identities are checked again
+before and after every browser probe. Other system libraries are recorded by
+package version, not individually content-hashed.
+
+All baseline files and licenses are preserved. The upstream change also modifies
+tests, so the reference imports only its asset-view implementation change. Its
+separate identity records both source snapshots without claiming to be the full
+upstream commit. Existing tests stay unchanged.
+
+Each variant runs three times with fresh temporary SQLite databases and asset
+storage, an isolated network namespace, and read-only source and dependencies.
+Checks cover the enforced sandbox header, asset bytes, compression, inline
+filenames, HEAD, private access and sharing, plus 28 existing asset view, model
+and API tests. The visible task explicitly requires a sandbox without permission
+exceptions; additional CSP directives and separate policies are accepted.
+
+Browser probes use real Django HTTP responses over guest loopback. They check
+plain and compressed HTML snapshots/uploads, authenticated sharing and public
+sharing. Each document must render its original body while blocking embedded
+scripts and access to application-origin cookies and local storage. An
+unsandboxed control must demonstrate working scripts and both storage mechanisms.
+Blank pages, browser errors, resource-limit failures and incomplete observations
+fail qualification. The baseline must reproduce all three unsafe behaviors in
+every asset view; the reference must prevent them.
+
+Only browser probes launch as the VM's dedicated unprivileged grader account.
+Temporary read-only input mounts make the selected source and probe helpers
+available without exposing controller directories. The mounts are released after
+each probe. WebKit's process sandbox is explicitly enabled and its seccomp,
+privilege and mount-namespace state is checked. Limits are 1 GiB, 256 tasks and
+90 seconds for a browser probe; non-browser Linkding checks retain their existing
+512 MiB, 32-task and 40-second limits. No host credentials or external network
+access are available to either probe.
+
+This is one browser engine, not a cross-browser matrix, the complete application
+suite, a frontend build or the production Docker deployment. Other sandbox
+permissions are checked through the header contract, not separate browser
+interactions. Raw scanner reports retain missed defects and unrelated findings.
+It is historical runner-development evidence, not a held-out case, an agent
+trial or a marketing claim. Existing qualification receipts remain unchanged;
+the browser checks produce a new qualification and harness identity.
+
+### Full-repository submission integrity
+
+The Tornado and Linkding submission self-tests use an owned Node process in the
+VM, not an AI client:
+
+```bash
+pnpm benchmark:repository:selftest tools/benchmark/.work/tornado-source.git
+pnpm benchmark:repository:selftest --linkding tools/benchmark/.work/linkding-source.git tools/benchmark/.work/linkding-runtime.json
+```
+
+Each test submits the full broken tree, applies only the pinned repair, and verifies that an edit to
+the license is rejected without grading. A final executable-mode change must
+invalidate the submitted snapshot. Snapshots retain all tracked files, including
+existing tests, hidden configuration and binary data, plus executable modes.
+Each run creates new private evidence
+and imports it through the same receipt checks used for agent trials.
+
+Repository tasks use `sourceFormat: "git-tree-v1"`, the frozen snapshot digest and
+an exact `editableFiles` list of existing implementation paths. Changes outside
+that list, new files and executable-mode changes fail integrity. Candidate bytes
+and modes are saved per submission; import verifies their digests and rechecks
+the edit policy against the frozen source. These are controller consistency
+checks, not independent attestations. This path currently supports the included
+Tornado and Linkding graders and does not install arbitrary project dependencies.
+Linkding reuses its frozen Python runtime and captures the installed browser
+identity before registering the scripted test. Both receipts are preserved and
+checked against the registration during evidence import. The grader identity
+covers the full frozen harness, including browser and sandbox helpers.
+
+Each valid Linkding submission runs the same response, browser and 28 existing
+test checks used in qualification. The script receives only a submission receipt,
+not grader feedback. Its seven-minute deadline and 210-second submission timeout
+apply only to this no-model self-test; browser process limits and subscription
+trial limits are unchanged. A passing self-test means its deliberately broken,
+repaired and invalid submissions were classified correctly, not that the final
+deliberately mutated candidate was accepted.
+
+A broader corpus, real-agent workflow validation and a new approved study are
+still needed. Neither qualification nor the scripted self-test authorizes
+additional subscription usage or changes the completed pilot.
+
+### Check desktop workflow setup
+
+```bash
+pnpm benchmark:repository:workflow SOURCE_GIT NEW_OUTPUT_DIRECTORY PRODUCT_RECEIPT
+pnpm benchmark:repository:workflow --linkding SOURCE_GIT NEW_OUTPUT_DIRECTORY PRODUCT_RECEIPT LINKDING_RUNTIME_RECEIPT
+```
+
+This uses the same pinned Tornado or Linkding source and installed product receipt as
+qualification. It starts a fresh desktop database and source workspace for each
+of `normal`, `report` and `mcp`. It captures CLI reports, desktop scan results,
+MCP requests and responses, and the exact prompt that would reach a model. No
+model client starts, no repair is applied, and no trial is added to the pilot.
+
+The normal prompt excludes SiteCMD findings. The report prompt includes the
+complete report. A rejected MCP repair handoff produces `product_error` and no
+prompt; it is never replaced by an unrelated finding. A case without a registered
+SiteCMD check produces `handoff_unmapped`, not a fabricated check ID or claimed
+MCP rejection. Its actual scan and issue responses are still captured. Linkding
+currently has no registered check for its asset sandbox defect.
+
+File bytes and executable modes must remain unchanged after setup. The receipt distinguishes a successful
+mechanics check (`passed`) from an available product handoff (`handoffAvailable`);
+exit zero does not mean the scanner detected the defect or the product repaired it.
+
+Source-only screening is not case qualification. Preserve pinned source and
+license information, runtime/dependency requirements and rejected candidates
+before running scanners or agents. Upstream repairs that also change tests or
+unrelated features need an explicitly derived implementation-only reference,
+unchanged baseline tests and independent acceptance checks. Do not treat a whole
+release as one repair or silently strip files to fit runner limits.
 
 ## Check the pipeline locally
 

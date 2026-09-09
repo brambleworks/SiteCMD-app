@@ -23,11 +23,11 @@ test("a pre-trial reading cannot stand in for post-trial quota evidence", async 
   assert.equal(events.length, 1);
 });
 
-test("fresh post-trial evidence is checked against the unchanged allowance baseline", async () => {
+test("fresh inactive-session evidence preserves the post-trial weekly allowance check", async () => {
   const now = Date.now();
   const baseline = {
     schemaVersion: 1,
-    capturedAt: new Date(now - 1000).toISOString(),
+    capturedAt: new Date(now - 120000).toISOString(),
     source: "Unit fixture, not provider evidence",
     accounts: ["codex", "claude"].map((provider) => ({
       provider,
@@ -44,18 +44,32 @@ test("fresh post-trial evidence is checked against the unchanged allowance basel
       ],
     })),
   };
+  baseline.accounts[1].windows.push({
+    id: "session",
+    kind: "session",
+    usedPercent: 34,
+    resetsAt: new Date(now - 60000).toISOString(),
+  });
   const current = structuredClone(baseline);
   current.capturedAt = new Date(now).toISOString();
-  current.accounts[1].windows[0].usedPercent = 30;
-  const result = await closingQuota({
-    baseline,
-    currentPath: "fixture",
-    billing: pilotPolicy.billing,
-    endedAt: now - 500,
-    log: () => {},
-    now: () => now,
-    read: () => current,
+  Object.assign(current.accounts[1].windows[1], {
+    usedPercent: 0,
+    resetsAt: null,
+    inactive: true,
   });
+  const check = () =>
+    closingQuota({
+      baseline,
+      currentPath: "fixture",
+      billing: pilotPolicy.billing,
+      endedAt: now - 500,
+      log: () => {},
+      now: () => now,
+      read: () => current,
+    });
+  assert.equal((await check()).quotaAllowed, true);
+  current.accounts[1].windows[0].usedPercent = 30;
+  const result = await check();
   assert.equal(result.quotaAllowed, false);
   assert.match(result.blockers.join(" "), /20 percentage points/);
 });

@@ -1,15 +1,26 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { parseArgs } from "node:util";
 import { calibrationCases, caseFiles, caseIdentity } from "./lib/calibration-cases.mjs";
 import { digest } from "./lib/workflow-plan.mjs";
 import { pilotPolicy, validatePilotStudy } from "./lib/workflow-pilot.mjs";
-import { agentVersions, reasoning } from "./lib/trial-invocation.mjs";
+import { trialConfigurations } from "./lib/trial-invocation.mjs";
 import { createStudyRun, writeNewJson } from "./lib/workflow-store.mjs";
 import { deployHarness } from "./lib/vm-harness.mjs";
+import { describeContinuation } from "./lib/workflow-continuation.mjs";
 
-const [gradesPath, scansPath, output] = process.argv.slice(2);
+const [gradesPath, scansPath, output, ...options] = process.argv.slice(2);
+const { values } = parseArgs({
+  args: options,
+  options: {
+    "continue-from": { type: "string" },
+    reason: { type: "string" },
+  },
+});
 if (!gradesPath || !scansPath || !output)
   throw new Error("Usage: prepare-calibration.mjs GRADES_JSON SCANS_JSON NEW_RUN_DIRECTORY");
+if (Boolean(values["continue-from"]) !== Boolean(values.reason))
+  throw new Error("A continuation requires both --continue-from and --reason");
 const grades = JSON.parse(readFileSync(gradesPath));
 const scans = JSON.parse(readFileSync(scansPath));
 const cases = calibrationCases.map((item) => ({
@@ -61,14 +72,9 @@ const study = {
     dirty: false,
     mcpSha256: scans.product.mcpSha256,
   },
-  configurations: pilotPolicy.models.map(({ agent, model }) => ({
-    id: `${agent}-high`,
-    agent,
-    model,
-    agentVersion: agentVersions[agent],
-    reasoning,
-    environment: `${scans.product.environment}; warm; controller ${harness.id}`,
-  })),
+  configurations: trialConfigurations(
+    `${scans.product.environment}; warm; controller ${harness.id}`,
+  ),
   tasks: cases.map((item) => {
     if (scans.sources[item.id] !== item.sourceSha256)
       throw new Error(`Scan source changed: ${item.id}`);
@@ -99,6 +105,8 @@ const study = {
     };
   }),
 };
+if (values["continue-from"])
+  study.continuation = describeContinuation(values["continue-from"], study, values.reason);
 validatePilotStudy(study);
 const plan = createStudyRun(study, output);
 mkdirSync(path.join(output, "inputs"), { mode: 0o700 });
@@ -109,7 +117,21 @@ writeNewJson(path.join(output, "inputs", "runner.json"), harness.files);
 writeNewJson(path.join(output, "inputs", "scans.json"), scans);
 const emptyQuota = JSON.parse(readFileSync(new URL("./quota-template.json", import.meta.url)));
 for (const name of ["quota-baseline.json", "quota-current.json"])
-  writeNewJson(path.join(output, name), emptyQuota);
+  writeNewJson(
+    path.join(output, name),
+    study.continuation
+      ? JSON.parse(readFileSync(path.join(study.continuation.sourceRun, name)))
+      : emptyQuota,
+  );
+if (study.continuation) {
+  writeFileSync(path.join(output, "quota-baseline.sha256"), study.continuation.baselineSha256, {
+    flag: "wx",
+    mode: 0o600,
+  });
+  const prior = path.join(study.continuation.sourceRun, "prior-attempts.json");
+  if (existsSync(prior))
+    writeNewJson(path.join(output, "prior-attempts.json"), JSON.parse(readFileSync(prior)));
+}
 for (const scan of scans.results)
   writeFileSync(path.join(output, "inputs", `${scan.id}-report.json`), scan.baseline.raw, {
     flag: "wx",

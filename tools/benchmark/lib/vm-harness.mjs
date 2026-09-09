@@ -13,7 +13,17 @@ export function deployHarness() {
     "workflow-contract",
     "workflow-plan",
     "workflow-quota",
+    "workflow-codex-quota",
+    "workflow-claude-quota",
+    "workflow-continuation",
     "workflow-usage",
+    "workflow-model-identity",
+    "repository-snapshot",
+    "repository-reference",
+    "repository-runtime",
+    "trial-source",
+    "trial-prompt",
+    "trial-candidate",
     "workflow-results",
     "workflow-artifacts",
     "workflow-store",
@@ -26,7 +36,25 @@ export function deployHarness() {
     new URL("../pilot-policy.json", import.meta.url),
     "utf8",
   );
-  for (const name of ["run-next.mjs", "prepare-calibration.mjs"])
+  files["cases/repository-calibration.json"] = readFileSync(
+    new URL("../cases/repository-calibration.json", import.meta.url),
+    "utf8",
+  );
+  files["cases/linkding-calibration.json"] = readFileSync(
+    new URL("../cases/linkding-calibration.json", import.meta.url),
+    "utf8",
+  );
+  files["cases/linkding-runtime.json"] = readFileSync(
+    new URL("../cases/linkding-runtime.json", import.meta.url),
+    "utf8",
+  );
+  for (const name of [
+    "run-next.mjs",
+    "prepare-calibration.mjs",
+    "qualify-repository.mjs",
+    "selftest-repository.mjs",
+    "prepare-repository-runtime.mjs",
+  ])
     files[`host/${name}`] = readFileSync(new URL(`../${name}`, import.meta.url), "utf8");
   files["host/vm-harness.mjs"] = readFileSync(new URL("./vm-harness.mjs", import.meta.url), "utf8");
   files["host/vm-trial-export.mjs"] = readFileSync(

@@ -26,13 +26,13 @@
     "runtime": "node",
     "entry": "app/api/continue/route.mjs",
     "prompt": "Review the continue endpoint's destination handling and fix any unsafe redirect behavior. Preserve supported local destinations and the response contract.",
-    "requirements": "Only same-origin paths beginning with a single slash may be used as destinations. Preserve their query and fragment. Missing, absolute, protocol-relative, backslash-normalized external and non-HTTP scheme destinations must go to /dashboard. Responses remain redirects with status 302.",
+    "requirements": "Only same-origin paths beginning with a single slash may be used as destinations. Preserve their query and fragment under standard URL normalization. Missing, absolute, protocol-relative, backslash-normalized external and non-HTTP scheme destinations must go to /dashboard. URL-ignored tabs, newlines and carriage returns must not bypass these restrictions, even when a normalized network-path destination has the same host. Responses remain redirects with status 302.",
     "files": {
       "package.json": "{\"private\":true,\"type\":\"module\",\"scripts\":{\"test\":\"node --test\"}}\n",
       "app/api/continue/route.mjs": "export function GET(request) {\n  const url = new URL(request.url);\n  const next = url.searchParams.get('next') || '/dashboard';\n  return Response.redirect(new URL(next, url.origin), 302);\n}\n"
     },
     "reference": {
-      "app/api/continue/route.mjs": "export function GET(request) {\n  const url = new URL(request.url);\n  const next = url.searchParams.get('next') || '/dashboard';\n  let target = new URL('/dashboard', url.origin);\n  if (next.startsWith('/') && !next.startsWith('//') && !next.includes('\\\\')) {\n    const candidate = new URL(next, url.origin);\n    if (candidate.origin === url.origin) target = candidate;\n  }\n  return Response.redirect(target, 302);\n}\n"
+      "app/api/continue/route.mjs": "export function GET(request) {\n  const url = new URL(request.url);\n  const next = url.searchParams.get('next') || '/dashboard';\n  let target = new URL('/dashboard', url.origin);\n  const normalized = next.replace(/[\\t\\n\\r]/g, '');\n  if (next.startsWith('/') && !/^\\/[/\\\\]/.test(normalized)) {\n    const candidate = new URL(next, url.origin);\n    if (candidate.origin === url.origin) target = candidate;\n  }\n  return Response.redirect(target, 302);\n}\n"
     }
   },
   {
@@ -61,12 +61,12 @@
     "runtime": "python",
     "entry": "app/api/download.py",
     "prompt": "Review the document download's handling of request-supplied paths and fix any unsafe behavior. Preserve access to documents under the configured root.",
-    "requirements": "Return UTF-8 document contents only for regular files contained in the configured root, including nested documents. Reject traversal, absolute paths and symlinks escaping that root with ValueError or PermissionError. Missing documents may raise FileNotFoundError. The root and request objects are supplied by the application.",
+    "requirements": "Return UTF-8 document contents only for regular files contained in the configured root, including nested documents. Reject absolute paths, traversal outside the root, escaping symlinks and non-regular files with ValueError or PermissionError. Missing documents may raise FileNotFoundError. Paths use POSIX semantics, including literal backslashes and drive-like filenames; the configured root may be '/'. Filesystem entries are stable during a call. The root and request objects are supplied by the application.",
     "files": {
       "app/api/download.py": "import os\n\ndef download(root, request):\n    with open(os.path.join(root, request.args['path']), encoding='utf-8') as document:\n        return document.read()\n"
     },
     "reference": {
-      "app/api/download.py": "from pathlib import Path\n\ndef download(root, request):\n    base = Path(root).resolve()\n    supplied = Path(request.args['path'])\n    if supplied.is_absolute():\n        raise ValueError('Absolute document path')\n    candidate = (base / supplied).resolve()\n    if not candidate.is_relative_to(base):\n        raise ValueError('Document is outside root')\n    with candidate.open(encoding='utf-8') as document:\n        return document.read()\n"
+      "app/api/download.py": "from pathlib import Path\nimport stat\n\ndef download(root, request):\n    base = Path(root).resolve()\n    supplied = Path(request.args['path'])\n    if supplied.is_absolute():\n        raise ValueError('Absolute document path')\n    candidate = (base / supplied).resolve()\n    if not candidate.is_relative_to(base):\n        raise ValueError('Document is outside root')\n    if not stat.S_ISREG(candidate.stat().st_mode):\n        raise ValueError('Document is not a regular file')\n    with candidate.open(encoding='utf-8') as document:\n        return document.read()\n"
     }
   },
   {

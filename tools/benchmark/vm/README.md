@@ -77,7 +77,14 @@ data directory per assignment. Guest-only bind mounts expose the same candidate
 under that user's home because Code Scan requires a source path inside its home.
 No host filesystem is mounted. WebDriver control ports are blocked for `runner`
 on every guest address; the controller checks the firewall and connection denial
-before launching an agent. Only the MCP arm gets a socket proxy to the real server.
+before launching an agent. Only the MCP arm gets a proxy to the real server.
+Per-trial file channels use a 32 MiB temporary filesystem with an inode cap.
+Agents can publish requests but cannot write controller-owned responses. Unix
+socket access remains denied by the agent sandbox.
+Claude's write-staging directory has an ACL granting only `sitecmd` read/traverse
+access in addition to its `runner` owner. Install the guest `acl` package for
+`setfacl` and `getfacl`; home directories, credentials and candidate source
+permissions are not broadened.
 
 Each candidate workspace has a 128 MiB temporary filesystem and an inode cap.
 Agent processes have a 2 GiB memory limit, a 128-task limit, bounded temporary

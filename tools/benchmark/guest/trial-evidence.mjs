@@ -1,29 +1,84 @@
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { digest } from "../lib/workflow-plan.mjs";
 import { writeNewJson } from "../lib/workflow-store.mjs";
 import { claudeUsage, codexUsage } from "../lib/workflow-usage.mjs";
+import { summarizeModelIdentity } from "../lib/workflow-model-identity.mjs";
+import { loadTrialSource } from "../lib/trial-source.mjs";
 import { gradeCase } from "./calibration-grader.mjs";
-import { candidatePatch, compareCandidate, readCandidate } from "./trial-snapshot.mjs";
+import { gradeRepository } from "./repository-grader.mjs";
+import {
+  candidateIdentity,
+  candidatePatch,
+  candidateRecord,
+  compareCandidate,
+  readCandidate,
+} from "./trial-snapshot.mjs";
+import {
+  captureRuntimeFiles,
+  prepareRuntimeFiles,
+  withoutRuntimeFiles,
+} from "./trial-runtime-files.mjs";
 
-export function createEvidence(directory, plan, assignment, item, files, workspace) {
+export function createEvidence(directory, plan, assignment, item, source, workspace) {
+  const task = plan.study.tasks.find((task) => task.id === item.id);
+  const { files, modes, editableFiles } = loadTrialSource(source, task);
+  const grader = task.sourceFormat ? "gradeRepository" : "gradeCase";
+  const runtimes =
+    item.id === "linkding-asset-sandbox"
+      ? [
+          ["runtimeSha256", "repositoryRuntime", "repository-runtime.json"],
+          ["browserRuntimeSha256", "browserRuntime", "browser-runtime.json"],
+        ]
+      : [];
+  for (const [field, input] of runtimes)
+    if (!item[input] || task[field] !== digest(item[input]))
+      throw new Error("Linkding runtime differs from its registration");
   mkdirSync(directory, { recursive: true, mode: 0o700 });
+  if (task.sourceFormat) writeNewJson(path.join(directory, "source.json"), source);
+  for (const [, input, file] of runtimes) writeNewJson(path.join(directory, file), item[input]);
   const submissions = [];
   const attempts = new Set();
-  const task = plan.study.tasks.find((task) => task.id === item.id);
+  let runtimeFiles = [];
+  let writeStaging;
+  let captures = 0;
+  const captureArtifacts = [];
   const log = (name, value) =>
     appendFileSync(path.join(directory, name), `${JSON.stringify(value)}\n`, { mode: 0o600 });
-  const submit = (summary, elapsedMs, attemptId) => {
-    const index = submissions.length + 1;
+  const initialized = () => {
+    writeStaging = prepareRuntimeFiles(workspace, files, { writeStaging: true });
+    runtimeFiles = captureRuntimeFiles(files, readCandidate(workspace), modes);
+    writeNewJson(path.join(directory, "runtime-files.json"), {
+      capturedAt: new Date().toISOString(),
+      stage:
+        plan.study.phase === "fixture"
+          ? "Synthetic runtime preparation; no model client initialized"
+          : "Client initialized before first user prompt",
+      emptyProtectionFiles: runtimeFiles,
+      writeStaging: writeStaging.receipt,
+    });
+  };
+  const normalize = (snapshot) => ({
+    ...snapshot,
+    files: withoutRuntimeFiles(snapshot.files, runtimeFiles, snapshot.modes),
+  });
+  const submit = (summary, elapsedMs, attemptId, { defer = false } = {}) => {
+    writeStaging?.verify();
+    const index = ++captures;
     const prefix = `submission-${index}`;
-    const snapshot = readCandidate(workspace);
-    const integrity = compareCandidate(files, snapshot.files, snapshot.violations);
+    const snapshot = normalize(readCandidate(workspace));
+    const options = { originalModes: modes, candidateModes: snapshot.modes, editableFiles };
+    const integrity = compareCandidate(files, snapshot.files, snapshot.violations, options);
     const staging = path.join(directory, prefix);
-    const patch = candidatePatch(staging, files, snapshot.files);
+    const patch = candidatePatch(staging, files, snapshot.files, options);
     const patchSha256 = digest(patch);
+    const snapshotSha256 = candidateIdentity(snapshot);
+    writeNewJson(path.join(directory, `${prefix}-candidate.json`), candidateRecord(snapshot));
     writeFileSync(path.join(directory, `${prefix}.diff`), patch, { flag: "wx", mode: 0o600 });
     const grade = integrity.passed
-      ? gradeCase(item, path.join(staging, "candidate"))
+      ? task.sourceFormat
+        ? gradeRepository(item, path.join(staging, "candidate"))
+        : gradeCase(item, path.join(staging, "candidate"))
       : { acceptancePass: false, regressionsPass: false, skipped: integrity.reason };
     writeNewJson(path.join(directory, `${prefix}-checks.json`), { ...grade, integrity, summary });
     const receipt = {
@@ -31,19 +86,20 @@ export function createEvidence(directory, plan, assignment, item, files, workspa
       studySha256: plan.studySha256,
       sourceSha256: task.sourceSha256,
       patchSha256,
+      snapshotSha256,
       graderSha256: task.graderSha256,
       executor: "Independent guest behavioral assertions",
       environment: plan.study.configurations[0].environment,
       acceptance: [
         {
-          command: "gradeCase acceptance assertions",
+          command: `${grader} acceptance assertions`,
           exitCode: integrity.passed ? (grade.acceptancePass ? 0 : 1) : null,
           log: `${prefix}-checks.json`,
         },
       ],
       regressions: [
         {
-          command: "gradeCase regression assertions and existing project tests",
+          command: `${grader} regression assertions and existing project tests`,
           exitCode: integrity.passed ? (grade.regressionsPass ? 0 : 1) : null,
           log: `${prefix}-checks.json`,
         },
@@ -51,24 +107,36 @@ export function createEvidence(directory, plan, assignment, item, files, workspa
       integrity,
     };
     writeNewJson(path.join(directory, `${prefix}-grade.json`), receipt);
-    submissions.push({
+    const submission = {
       patch: `${prefix}.diff`,
       patchSha256,
+      candidate: `${prefix}-candidate.json`,
+      snapshotSha256,
       elapsedMs,
       graderSha256: task.graderSha256,
       acceptancePass: grade.acceptancePass,
       regressionsPass: grade.regressionsPass,
       integrityPass: integrity.passed,
       receipt: `${prefix}-grade.json`,
-    });
-    if (attemptId) attempts.add(attemptId);
+    };
+    captureArtifacts.push(
+      `${prefix}.diff`,
+      `${prefix}-checks.json`,
+      `${prefix}-grade.json`,
+      `${prefix}-candidate.json`,
+    );
+    let committed = false;
+    const commit = () => {
+      if (committed) return;
+      committed = true;
+      submissions.push(submission);
+      if (attemptId) attempts.add(attemptId);
+    };
+    if (!defer) commit();
     return {
+      commit,
       integrity,
-      snapshotSha256: digest(
-        Object.fromEntries(
-          Object.entries(snapshot.files).map(([name, data]) => [name, data.toString("base64")]),
-        ),
-      ),
+      snapshotSha256,
     };
   };
   const finish = ({
@@ -79,15 +147,24 @@ export function createEvidence(directory, plan, assignment, item, files, workspa
     quotaAllowed,
     agentInvoked = true,
     evidenceComplete = true,
-    observedModels = [],
+    providerCompleted = status === "completed",
   }) => {
     const raw = readFileSync(path.join(directory, "transcript.jsonl"), "utf8");
+    const identity = summarizeModelIdentity(
+      configuration.agent,
+      configuration.model,
+      raw,
+      evidenceComplete && providerCompleted,
+    );
+    const observedModels = agentInvoked ? identity.observed : [];
+    if (agentInvoked) writeNewJson(path.join(directory, "model-identity.json"), identity);
     const events = raw
       .split("\n")
       .filter(Boolean)
       .flatMap((line) => {
         try {
-          return [JSON.parse(line)];
+          const event = JSON.parse(line);
+          return event && typeof event === "object" && !Array.isArray(event) ? [event] : [];
         } catch {
           return [];
         }
@@ -115,13 +192,13 @@ export function createEvidence(directory, plan, assignment, item, files, workspa
         includesAllAgents: true,
         incrementalCostUsd: 0,
       };
-    } else if (configuration.agent === "claude" && status === "completed" && evidenceComplete) {
+    } else if (configuration.agent === "claude" && providerCompleted && evidenceComplete) {
       const results = events.filter((event) => event.type === "result");
       if (results.length === 1)
         usage = claudeUsage(results[0], { noSubagents: true, billingMode: "subscription" });
     } else {
       const turns = events.filter((event) => event.type === "turn.completed");
-      if (turns.length && status === "completed" && evidenceComplete) {
+      if (turns.length && providerCompleted && evidenceComplete) {
         const rows = turns.map((event) =>
           codexUsage(event, { noSubagents: true, billingMode: "subscription" }),
         );
@@ -149,8 +226,12 @@ export function createEvidence(directory, plan, assignment, item, files, workspa
         "quota-events.jsonl",
         "quota-baseline.json",
         "quota-current.json",
+        ...(task.sourceFormat ? ["source.json"] : []),
+        ...runtimes.map(([, , file]) => file),
         ...(agentInvoked ? ["prompt.txt", "final-candidate.json"] : []),
+        ...(existsSync(path.join(directory, "runtime-files.json")) ? ["runtime-files.json"] : []),
         ...(assignment.arm === "mcp" ? ["mcp.jsonl"] : []),
+        ...captureArtifacts,
       ],
     });
     const record = {
@@ -174,6 +255,8 @@ export function createEvidence(directory, plan, assignment, item, files, workspa
               requested: configuration.model,
               observed: observedModels,
               source: "explicit-cli-request",
+              receipt: "model-identity.json",
+              verified: identity.verified,
             },
           }
         : {}),
@@ -188,5 +271,14 @@ export function createEvidence(directory, plan, assignment, item, files, workspa
     writeNewJson(path.join(directory, "trial.json"), record);
     return record;
   };
-  return { submissions, attempts, submit, log, finish };
+  return {
+    submissions,
+    attempts,
+    submit,
+    log,
+    finish,
+    initialized,
+    normalize,
+    snapshotIdentity: (snapshot) => candidateIdentity(normalize(snapshot)),
+  };
 }

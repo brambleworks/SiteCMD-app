@@ -144,6 +144,19 @@ function validateTask(task) {
   for (const key of ["sourceSha256", "referenceSha256", "graderSha256", "reportSha256"]) {
     requireHash(task[key], `task ${key}`);
   }
+  if (task.sourceFormat !== undefined || task.editableFiles !== undefined) {
+    requireCondition(
+      task.sourceFormat === "git-tree-v1" && task.surface === "code",
+      "invalid task source format",
+    );
+    requireCondition(
+      Array.isArray(task.editableFiles) &&
+        task.editableFiles.length <= 1000 &&
+        new Set(task.editableFiles).size === task.editableFiles.length &&
+        task.editableFiles.every((name) => typeof name === "string" && name.trim().length > 0),
+      "repository tasks require unique registered edit paths",
+    );
+  }
   requireCondition(task.baseline?.regressionsPass === true, "baseline regression checks must pass");
   requireCondition(
     task.baseline?.acceptancePass === (task.kind === "negative_control"),
@@ -197,6 +210,13 @@ export function validateTrial(record, assignment, study) {
     );
     selection.observed.forEach((model) => requireText(model, "provider-observed model"));
     unique(selection.observed, "provider-observed models");
+    if (selection.receipt !== undefined || selection.verified !== undefined) {
+      requireText(selection.receipt, "model identity receipt");
+      requireCondition(
+        typeof selection.verified === "boolean",
+        "model identity verification is required",
+      );
+    }
     requireCondition(
       record.model === (selection.observed.length === 1 ? selection.observed[0] : null),
       "model must equal the single provider-observed identity or remain unknown",

@@ -71,6 +71,11 @@ export function analyzeStudy(plan, results, { bootstrapSamples = 2000 } = {}) {
     }
   }
   const blockers = [];
+  const retainedAssigned = plan.study.continuation?.retained.length ?? 0;
+  if (retainedAssigned)
+    blockers.push(
+      "Continuation runner versions must be reported separately; earlier outcomes remain retained",
+    );
   if (plan.study.phase !== "confirmatory")
     blockers.push(`${plan.study.phase} studies are not confirmatory evidence`);
   if (records.size !== plan.assignments.length)
@@ -78,8 +83,10 @@ export function analyzeStudy(plan, results, { bootstrapSamples = 2000 } = {}) {
   if (
     results.some(
       (record) =>
-        record.modelSelection &&
-        (record.modelSelection.observed.length !== 1 ||
+        record.agentInvoked !== false &&
+        (!record.modelSelection?.receipt ||
+          record.modelSelection.verified !== true ||
+          record.modelSelection.observed.length !== 1 ||
           record.model !== record.modelSelection.requested),
     )
   )
@@ -127,6 +134,8 @@ export function analyzeStudy(plan, results, { bootstrapSamples = 2000 } = {}) {
     studySha256: plan.studySha256,
     phase: plan.study.phase,
     assigned: plan.assignments.length,
+    retainedAssigned,
+    originalAssigned: plan.assignments.length + retainedAssigned,
     recorded: records.size,
     knownSpendUsd,
     claimReviewReady: blockers.length === 0,
@@ -154,6 +163,11 @@ export function renderWorkflowReport(plan, analysis) {
       : "**Not ready for marketing claims.**",
     "",
   ];
+  if (analysis.retainedAssigned)
+    lines.push(
+      `${analysis.retainedAssigned} earlier assignments, including failures, are retained through source study ${plan.study.continuation.sourceStudySha256} and its recorded predecessors. The original population is ${analysis.originalAssigned}; this report covers only the ${analysis.assigned} unrun assignments continued with the corrected runner. Do not pool the runner versions as one uniform study.`,
+      "",
+    );
   if (analysis.phase === "fixture")
     lines.push(
       "Usage, timing, and review decisions are synthetic test inputs. No AI agent or real MCP workflow was measured.",

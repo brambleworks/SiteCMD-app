@@ -7,12 +7,15 @@ import { loadPlan, loadResults } from "./lib/workflow-store.mjs";
 import { exportGuestTrial } from "./lib/vm-trial-export.mjs";
 import { deployHarness } from "./lib/vm-harness.mjs";
 import { guestCommand, guestProcess } from "./lib/vm-guest.mjs";
+import { verifyContinuation } from "./lib/workflow-continuation.mjs";
+import { loadTrialSource } from "./lib/trial-source.mjs";
 
 const supplied = process.argv[2];
 if (!supplied) throw new Error("Usage: run-next.mjs RUN_DIRECTORY");
 const run = path.resolve(supplied);
 const plan = loadPlan(run);
 validatePilotStudy(plan.study);
+verifyContinuation(run, plan);
 const recorded = new Set(loadResults(run, plan).map((record) => record.trialId));
 const assignment = plan.assignments.find((item) => !recorded.has(item.id));
 if (!assignment) {
@@ -43,8 +46,8 @@ const product = JSON.parse(readFileSync(path.join(run, "inputs", "product.json")
 if (digest(product) !== plan.study.productSha256) throw new Error("Frozen product receipt changed");
 const report = readFileSync(path.join(run, "inputs", `${assignment.task}-report.json`), "utf8");
 const task = plan.study.tasks.find((task) => task.id === assignment.task);
-if (digest(report) !== task.reportSha256 || digest(item.baselineFiles) !== task.sourceSha256)
-  throw new Error("Frozen input changed");
+loadTrialSource(item.baselineFiles, task);
+if (digest(report) !== task.reportSha256) throw new Error("Frozen input changed");
 console.log(
   `Running ${assignment.task}, ${assignment.configuration}, ${assignment.arm}. Update quota-current.json from real readings before it becomes five minutes old.`,
 );

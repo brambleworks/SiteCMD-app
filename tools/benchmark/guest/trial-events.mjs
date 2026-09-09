@@ -1,6 +1,7 @@
 import { StringDecoder } from "node:string_decoder";
+import { modelClaims } from "../lib/workflow-model-identity.mjs";
 
-export function watchProviderEvents(requestedModel, stop) {
+export function watchProviderEvents(requestedModel, stop, agent) {
   const decoder = new StringDecoder("utf8");
   const observed = new Set();
   let pending = "";
@@ -11,15 +12,11 @@ export function watchProviderEvents(requestedModel, stop) {
     } catch {
       return;
     }
-    const models = [
-      ...(event.type === "system" && event.subtype === "init" ? [event.model] : []),
-      ...(event.type === "assistant" ? [event.message?.model] : []),
-      ...(event.type === "result" ? Object.keys(event.modelUsage ?? {}) : []),
-      ...(["thread.started", "turn.started", "turn.completed"].includes(event.type)
-        ? [event.model]
-        : []),
-    ].filter((model) => typeof model === "string" && model.length > 0);
-    for (const model of models) {
+    if (!event || typeof event !== "object" || Array.isArray(event)) return;
+    const claims = modelClaims(agent, event);
+    if (claims.configured.some((model) => model !== requestedModel))
+      stop("Client model selection differs from the frozen request");
+    for (const { model } of claims.observations) {
       observed.add(model);
       if (model !== requestedModel)
         stop(`Provider model differs from the frozen request: ${model}`);

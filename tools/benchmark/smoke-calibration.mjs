@@ -6,27 +6,34 @@ import { deployHarness } from "./lib/vm-harness.mjs";
 import { writeNewJson } from "./lib/workflow-store.mjs";
 
 const harness = deployHarness();
-const id = randomBytes(16).toString("hex");
-const item = calibrationCases.find((item) => item.id === "credentialed-cors");
-const receipt = JSON.parse(
-  guestCommand(
-    [
-      "sudo",
-      "flock",
-      "-n",
-      "/run/sitecmd-benchmark-execution.lock",
-      "node",
-      `${harness.directory}/desktop-smoke.mjs`,
-    ],
-    {
-      input: JSON.stringify({ id, item, files: caseFiles(item) }),
-      capture: true,
-      timeout: 300000,
-    },
-  ),
-);
-const file = path.join(workRoot, `desktop-smoke-${id}.json`);
-writeNewJson(file, { ...receipt, agentInvoked: false, harnessSha256: harness.id });
-console.log(
-  `Desktop scan, real MCP fix brief, reference repair and verification passed. No model calls. Evidence: ${file}`,
-);
+for (const name of ["credentialed-cors", "document-download"]) {
+  const id = randomBytes(12).toString("hex");
+  const item = calibrationCases.find((item) => item.id === name);
+  const receipt = JSON.parse(
+    guestCommand(
+      [
+        "sudo",
+        "flock",
+        "-n",
+        "/run/sitecmd-benchmark-execution.lock",
+        "node",
+        `${harness.directory}/desktop-smoke.mjs`,
+      ],
+      {
+        input: JSON.stringify({
+          id,
+          item,
+          files: caseFiles(item),
+          staging: name === "document-download",
+        }),
+        capture: true,
+        timeout: 300000,
+      },
+    ),
+  );
+  const file = path.join(workRoot, `desktop-smoke-${id}.json`);
+  writeNewJson(file, { ...receipt, agentInvoked: false, harnessSha256: harness.id });
+  console.log(
+    `${name}: desktop scan, MCP reference repair, verification and rejected retry passed. No model calls. Evidence: ${file}`,
+  );
+}

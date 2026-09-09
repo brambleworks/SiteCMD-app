@@ -41,6 +41,14 @@ function validateSnapshot(snapshot) {
         requireCondition(window.usedPercent <= 100, "usedPercent must not exceed 100");
       }
       if (window.resetsAt !== null) timestamp(window.resetsAt, "resetsAt");
+      if (window.inactive !== undefined)
+        requireCondition(
+          window.inactive === true &&
+            window.kind === "session" &&
+            window.usedPercent === 0 &&
+            window.resetsAt === null,
+          "Inactive quota requires an explicit zero-usage session without a reset date",
+        );
     }
     requireCondition(
       account.windows.some((window) => window.kind === "weekly"),
@@ -58,12 +66,22 @@ function checkWindow(before, current, label, policy, capturedAt, now, blockers) 
   }
   const reset = current.resetsAt === null ? NaN : timestamp(current.resetsAt, "resetsAt");
   const previousReset = before.resetsAt === null ? NaN : timestamp(before.resetsAt, "resetsAt");
-  if (!Number.isFinite(reset) || !Number.isFinite(previousReset) || reset <= now) {
+  if (current.inactive) {
+    if (!before.inactive && (!Number.isFinite(previousReset) || capturedAt < previousReset))
+      blockers.push(`${label}: session became inactive before its recorded reset`);
+    return;
+  }
+  if (
+    !Number.isFinite(reset) ||
+    (!before.inactive && !Number.isFinite(previousReset)) ||
+    reset <= now
+  ) {
     blockers.push(`${label}: reset time is unknown or the window has expired`);
     return;
   }
   const sameWindow = before.resetsAt === current.resetsAt;
   if (
+    !before.inactive &&
     !sameWindow &&
     (current.kind === "weekly" || capturedAt < previousReset || reset <= previousReset)
   )

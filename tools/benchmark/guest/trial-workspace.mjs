@@ -1,9 +1,11 @@
 import { chmodSync, chownSync, mkdirSync, writeFileSync, readdirSync, lstatSync } from "node:fs";
 import path from "node:path";
+import { validateCandidateFiles } from "../lib/trial-candidate.mjs";
 import { systemCommand } from "./desktop-session.mjs";
 
-export function createWorkspace(id, files) {
+export function createWorkspace(id, files, modes = {}) {
   if (!/^[a-f0-9]{24,64}$/.test(id)) throw new Error("Invalid workspace identity");
+  validateCandidateFiles(files, modes);
   const parent = "/srv/sitecmd-benchmark/workspaces";
   chownSync(parent, 0, 0);
   chmodSync(parent, 0o711);
@@ -21,11 +23,6 @@ export function createWorkspace(id, files) {
   const gid = Number(systemCommand("id", ["-g", "runner"]));
   chownSync(workspace, uid, gid);
   for (const [name, contents] of Object.entries(files)) {
-    if (
-      name.startsWith("/") ||
-      name.split("/").some((part) => !part || part === "." || part === "..")
-    )
-      throw new Error("Invalid workspace path");
     const parts = name.split("/");
     let directory = workspace;
     for (const part of parts.slice(0, -1)) {
@@ -34,8 +31,11 @@ export function createWorkspace(id, files) {
       chownSync(directory, uid, gid);
     }
     const target = path.join(workspace, name);
-    writeFileSync(target, contents, { flag: "wx", mode: 0o644 });
+    const mode = Object.hasOwn(modes, name) ? modes[name] : "100644";
+    const permissions = mode === "100755" ? 0o755 : 0o644;
+    writeFileSync(target, contents, { flag: "wx", mode: permissions });
     chownSync(target, uid, gid);
+    chmodSync(target, permissions);
   }
   return workspace;
 }

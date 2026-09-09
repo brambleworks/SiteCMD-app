@@ -13,6 +13,7 @@ import { runFixture } from "./lib/workflow-fixture.mjs";
 import { pilotPolicy, validatePilotStudy } from "./lib/workflow-pilot.mjs";
 import { evaluateQuota } from "./lib/workflow-quota.mjs";
 import { probeAgentAccounts } from "./lib/workflow-preflight.mjs";
+import { verifyContinuation } from "./lib/workflow-continuation.mjs";
 
 const HELP = `Usage: pnpm benchmark <command> [options]
 
@@ -22,7 +23,7 @@ const HELP = `Usage: pnpm benchmark <command> [options]
                                      Check both account readings against the pilot policy
   fixture --out <new-directory>       Exercise the pipeline without agents or paid calls
   plan --study <json> --out <new-dir>  Freeze a study and randomized paired assignments
-       [--pilot]                     Require the approved thirty-trial subscription policy
+       [--pilot]                     Require the approved subscription pilot policy
   record --run <directory> --input <trial.json>
                                      Import a trial and its evidence without overwriting
   review --run <directory> --trial <id> --input <review.json>
@@ -88,6 +89,7 @@ function main(argv) {
   } else {
     const directory = command === "fixture" ? values.out : values.run;
     const plan = command === "fixture" ? runFixture(directory) : loadPlan(directory);
+    verifyContinuation(directory, plan);
     const analysis = analyzeStudy(plan, loadResults(directory, plan));
     console.log(
       values.json ? JSON.stringify(analysis, null, 2) : renderWorkflowReport(plan, analysis),

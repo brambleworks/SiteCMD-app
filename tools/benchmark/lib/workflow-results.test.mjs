@@ -25,6 +25,39 @@ test("fixture runs never become confirmatory evidence and negative controls are 
   assert.match(renderWorkflowReport(plan, analysis), /Not ready for marketing claims/);
 });
 
+test("legacy model labels cannot produce confirmatory claims without response receipts", () => {
+  const study = fixtureStudy();
+  Object.assign(study, {
+    phase: "confirmatory",
+    registration: "Synthetic registration",
+    sampleSizeRationale: "Test only",
+  });
+  study.sitecmd.dirty = false;
+  study.tasks.forEach((task) => {
+    task.holdout = true;
+  });
+  const plan = createPlan(study);
+  const records = plan.assignments.map((assignment) => ({
+    ...fixtureRecord(plan, assignment),
+    fixture: false,
+  }));
+  assert.equal(analyze(plan, records).claimReviewReady, false);
+  for (const record of records) {
+    record.modelSelection = {
+      requested: record.model,
+      observed: [record.model],
+      source: "explicit-cli-request",
+    };
+  }
+  assert.equal(analyze(plan, records).claimReviewReady, false);
+  for (const record of records) {
+    Object.assign(record.modelSelection, { receipt: "model-identity.json", verified: true });
+  }
+  assert.equal(analyze(plan, records).claimReviewReady, true);
+  records[0].modelSelection.verified = false;
+  assert.equal(analyze(plan, records).claimReviewReady, false);
+});
+
 test("missing assignments withhold rates and spending estimates", () => {
   const { plan, records } = setup();
   const missing = records.findIndex(

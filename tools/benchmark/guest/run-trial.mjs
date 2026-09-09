@@ -5,6 +5,8 @@ import { digest, validatePlan } from "../lib/workflow-plan.mjs";
 import { probeAgentAccounts } from "../lib/workflow-preflight.mjs";
 import { evaluateQuota } from "../lib/workflow-quota.mjs";
 import { writeNewJson } from "../lib/workflow-store.mjs";
+import { loadTrialSource } from "../lib/trial-source.mjs";
+import { trialPrompt } from "../lib/trial-prompt.mjs";
 import { agentVersions, trialInvocation } from "../lib/trial-invocation.mjs";
 import { createTrialBridge } from "./trial-bridge.mjs";
 import { startDesktop, systemCommand } from "./desktop-session.mjs";
@@ -19,20 +21,20 @@ import { verifyControlIsolation } from "./trial-isolation.mjs";
 import { createEvidence } from "./trial-evidence.mjs";
 import { launchAgent } from "./trial-supervisor.mjs";
 import { prepareProject, trialUrl } from "./trial-setup.mjs";
-import { readFix, observeVerification } from "./product-observation.mjs";
-import { readCandidate } from "./trial-snapshot.mjs";
+import { canRequestVerification, readFix, observeVerification } from "./product-observation.mjs";
+import { candidateRecord, readCandidate } from "./trial-snapshot.mjs";
 import { closingQuota } from "./closing-quota.mjs";
 
 if (process.platform !== "linux" || process.getuid() !== 0)
   throw new Error("Guest controller required");
 const input = JSON.parse(readFileSync(0, "utf8"));
-const { assignment, item, files, product, baseline, current } = input;
+const { assignment, item, files: source, product, baseline, current } = input;
 const plan = validatePlan(input.plan);
 if (!plan.assignments.some((entry) => digest(entry) === digest(assignment)))
   throw new Error("Unknown assignment");
 const task = plan.study.tasks.find((task) => task.id === assignment.task);
-if (digest(files) !== task.sourceSha256 || item.id !== task.id)
-  throw new Error("Case source differs from the frozen study");
+const { files, modes } = loadTrialSource(source, task);
+if (item.id !== task.id) throw new Error("Case source differs from the frozen study");
 for (const key of ["id", "kind", "runtime", "entry", "rule"])
   if (item[key] !== task[key]) throw new Error(`Case ${key} differs from the frozen study`);
 if (digest(product) !== plan.study.productSha256)
@@ -75,14 +77,14 @@ mkdirSync(directory, { recursive: true, mode: 0o700 });
 writeNewJson(`${directory}/quota-baseline.json`, baseline);
 writeNewJson(`${directory}/quota-current.json`, current);
 const workspace = `/srv/sitecmd-benchmark/workspaces/${assignment.id}`;
-const evidence = createEvidence(directory, plan, assignment, item, files, workspace);
+const evidence = createEvidence(directory, plan, assignment, item, source, workspace);
 let desktop, bridge, mcp, agent, mounted;
 let workspaceCreated = false;
 let result;
 let finalSnapshot;
 let agentInvoked = false;
 let setupStage = "environment";
-const socket = `/run/sitecmd-benchmark/${assignment.id}.sock`;
+const channel = `/run/sitecmd-benchmark/${assignment.id}`;
 const assertNotCancelled = () => {
   if (existsSync(`/run/sitecmd-benchmark-cancel-${assignment.id}`))
     throw new Error("Trial cancelled by the operator");
@@ -90,7 +92,7 @@ const assertNotCancelled = () => {
 const publicTools = "/usr/local/lib/sitecmd-benchmark";
 try {
   assertNotCancelled();
-  createWorkspace(assignment.id, files);
+  createWorkspace(assignment.id, files, modes);
   workspaceCreated = true;
   protectPreviousWorkspaces(workspace);
   mounted = mountDesktopWorkspace(assignment.id, workspace);
@@ -109,16 +111,19 @@ try {
   setupStage = "environment";
   mkdirSync("/run/sitecmd-benchmark", { recursive: true, mode: 0o755 });
   mkdirSync(publicTools, { recursive: true, mode: 0o755 });
-  for (const name of ["bridge-client.mjs", "mcp-proxy.mjs", "submit.mjs"])
+  for (const name of ["bridge-files.mjs", "bridge-client.mjs", "mcp-proxy.mjs", "submit.mjs"])
     copyFileSync(new URL(`./${name}`, import.meta.url), path.join(publicTools, name));
   mcp =
     assignment.arm === "mcp"
       ? openMcp(product.mcp, desktop.database, (event) => evidence.log("mcp.jsonl", event))
       : null;
   bridge = await createTrialBridge({
-    socket,
+    channel,
     arm: assignment.arm,
     mcp,
+    canVerify: (attemptId) =>
+      canRequestVerification(desktop.database, attemptId, prepared.projectId),
+    onError: (error) => agent?.stop(error.message),
     owner: {
       uid: Number(systemCommand("id", ["-u", "runner"])),
       gid: Number(systemCommand("id", ["-g", "runner"])),
@@ -145,16 +150,32 @@ try {
         throw error;
       }
       agent.freeze();
-      try {
-        const captured = evidence.submit(summary, agent.elapsed(), attemptId);
+      let captured;
+      const commit = () => {
+        captured.commit();
         finalSnapshot = captured.snapshotSha256;
+      };
+      try {
+        captured = evidence.submit(summary, agent.elapsed(), attemptId, {
+          defer: kind === "verification",
+        });
         if (!captured.integrity.passed) {
+          commit();
           agent.stop(captured.integrity.reason, "agent_error");
           throw new Error(captured.integrity.reason);
         }
+        if (kind !== "verification") commit();
+      } catch (error) {
+        agent.stop(error.message);
+        throw error;
       } finally {
         agent.thaw();
       }
+      if (kind === "verification")
+        return {
+          commit,
+          uncertain: (error) => agent.stop(`Verification response unavailable: ${error.message}`),
+        };
       return {
         recorded: evidence.submissions.length,
         remaining: plan.study.limits.submissions - evidence.submissions.length,
@@ -165,30 +186,24 @@ try {
   });
   const invocation = trialInvocation({
     agent: configuration.agent,
+    model: configuration.model,
     arm: assignment.arm,
     workspace,
-    socket,
+    channel,
     proxy: `${publicTools}/mcp-proxy.mjs`,
   });
   writeNewJson(`${directory}/configuration.json`, { configuration, invocation, accounts });
-  const submission =
-    assignment.arm === "mcp" && item.kind === "repair"
-      ? "Submit each candidate with the SiteCMD request_verification tool. Read get_fix_brief first and use get_fix_status to check the result."
-      : `Submit each candidate, including an intentional no-op, with: node ${publicTools}/submit.mjs ${socket} "short summary"`;
-  const prompt = [
-    task.prompt,
-    task.requirements,
-    `Work only in ${workspace}. Do not delegate, invoke another AI client, change tests or scanner suppressions, or access accounts and other workspaces. Use the existing tests and ordinary local tools.`,
-    submission,
-    "You may submit at most three candidates. Stop editing once you have submitted your final candidate. Explain the result and stop. Independent grader feedback is withheld in every workflow.",
-    ...(assignment.arm === "report" ? ["Complete pretrial SiteCMD report:", input.report] : []),
-    ...(assignment.arm === "mcp"
-      ? [
-          `SiteCMD project #${prepared.projectId}, URL ${trialUrl}. Desktop paths in briefs refer to a mount of your current working directory.`,
-          prepared.handoff,
-        ]
-      : []),
-  ].join("\n\n");
+  const prompt = trialPrompt({
+    task,
+    arm: assignment.arm,
+    workspace,
+    channel,
+    publicTools,
+    projectId: prepared.projectId,
+    url: trialUrl,
+    handoff: prepared.handoff,
+    report: input.report,
+  });
   writeFileSync(`${directory}/prompt.txt`, prompt, { flag: "wx", mode: 0o600 });
   assertNotCancelled();
   agent = launchAgent({
@@ -202,26 +217,23 @@ try {
     currentQuota: `${directory}/quota-current.json`,
     requestedModel: configuration.model,
     log: evidence.log,
+    initialized: evidence.initialized,
   });
   agentInvoked = true;
   result = await agent.done;
   const final = readCandidate(workspace);
-  writeNewJson(`${directory}/final-candidate.json`, {
-    files: Object.fromEntries(
-      Object.entries(final.files).map(([name, bytes]) => [name, bytes.toString("base64")]),
-    ),
-    violations: final.violations,
-  });
-  const finalHash = digest(
-    Object.fromEntries(
-      Object.entries(final.files).map(([name, bytes]) => [name, bytes.toString("base64")]),
-    ),
-  );
+  writeNewJson(`${directory}/final-candidate.json`, candidateRecord(final));
+  const finalHash = evidence.snapshotIdentity(final);
   if (!evidence.submissions.length || finalHash !== finalSnapshot || final.violations.length)
     result = {
       ...result,
-      status: "agent_error",
-      failure: "No final submission, or unsubmitted changes remained after the final candidate",
+      status: result.status === "completed" ? "agent_error" : result.status,
+      failure: [
+        result.failure,
+        "No final submission, or unsubmitted changes remained after the final candidate",
+      ]
+        .filter(Boolean)
+        .join("; "),
     };
   if (mcp)
     for (const attempt of evidence.attempts) {

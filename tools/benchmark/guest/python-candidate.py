@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -28,8 +29,15 @@ try:
         (root / "nested").mkdir(parents=True)
         (root / "readme.txt").write_text(data["text"])
         (root / "nested" / "guide.txt").write_text(data["text"] + " nested")
+        (root / "notes").mkdir()
+        (root / "notes\\draft.txt").write_text(data["text"])
+        (root / "notes" / "draft.txt").write_text("different-document-canary")
+        (root / "C:notes.txt").write_text(data["text"])
+        (root / "inside").symlink_to(root / "readme.txt")
+        os.mkfifo(root / "pipe")
         Path("/tmp/outside.txt").write_text("outside-root-canary")
         (root / "escape").symlink_to("/tmp/outside.txt")
-        print(json.dumps({"result": candidate.download(str(root), request)}))
+        configured_root = "/" if data.get("root") == "/" else str(root)
+        print(json.dumps({"result": candidate.download(configured_root, request)}))
 except Exception as error:
     print(json.dumps({"error": type(error).__name__, "message": str(error)}))

@@ -22,17 +22,17 @@ function snapshot(capturedAt = "2026-09-03T16:00:00Z") {
   };
 }
 
-test("the pilot allows only thirty assignments, exact models, and no additional spending", () => {
+test("the pilot allows only forty-five assignments, exact models, and no additional spending", () => {
   assert.equal(
     pilotPolicy.caseCount *
       pilotPolicy.models.length *
       pilotPolicy.arms.length *
       pilotPolicy.repeats,
-    30,
+    45,
   );
   assert.deepEqual(
     pilotPolicy.models.map((item) => item.model),
-    ["gpt-5.6-sol", "claude-opus-5"],
+    ["gpt-5.6-sol", "claude-opus-5", "gpt-6-astra"],
   );
   assert.equal(pilotPolicy.limits.studyCostUsd, 0);
   assert.equal(pilotPolicy.limits.trialSeconds, 1200);
@@ -169,4 +169,133 @@ test("a real session reset does not replenish the frozen weekly budget", () => {
   assert.equal(evaluateQuota(baseline, current, pilotPolicy.billing, later).quotaAllowed, true);
   current.accounts[0].windows[0].usedPercent = 30;
   assert.equal(evaluateQuota(baseline, current, pilotPolicy.billing, later).quotaAllowed, false);
+});
+
+test("a reset session can be explicitly inactive without inventing a reset date", () => {
+  const baseline = snapshot("2026-09-03T15:00:00Z");
+  const current = snapshot("2026-09-03T18:01:00Z");
+  current.accounts[0].windows[1].resetsAt = "2026-09-03T23:00:00Z";
+  Object.assign(current.accounts[1].windows[1], {
+    usedPercent: 0,
+    resetsAt: null,
+    inactive: true,
+  });
+  const result = evaluateQuota(
+    baseline,
+    current,
+    pilotPolicy.billing,
+    Date.parse(current.capturedAt),
+  );
+  assert.deepEqual(result.blockers, []);
+  assert.equal(result.quotaAllowed, true);
+});
+
+test("an inactive baseline session can stay idle and later start a new session", () => {
+  const baseline = snapshot("2026-09-03T15:00:00Z");
+  Object.assign(baseline.accounts[1].windows[1], {
+    usedPercent: 0,
+    resetsAt: null,
+    inactive: true,
+  });
+  const current = structuredClone(baseline);
+  current.capturedAt = "2026-09-03T16:00:00Z";
+  const check = () => evaluateQuota(baseline, current, pilotPolicy.billing, NOW);
+  assert.equal(check().quotaAllowed, true);
+  Object.assign(current.accounts[1].windows[1], {
+    usedPercent: 5,
+    resetsAt: "2026-09-03T21:00:00Z",
+  });
+  delete current.accounts[1].windows[1].inactive;
+  assert.equal(check().quotaAllowed, true);
+  current.accounts[1].windows[1].usedPercent = 71;
+  assert.match(check().blockers.join("\n"), /30% remaining/);
+});
+
+test("inactive sessions do not exempt weekly limits, evidence freshness or reset chronology", () => {
+  const baseline = snapshot("2026-09-03T15:00:00Z");
+  const current = snapshot("2026-09-03T18:01:00Z");
+  current.accounts[0].windows[1].resetsAt = "2026-09-03T23:00:00Z";
+  Object.assign(current.accounts[1].windows[1], {
+    usedPercent: 0,
+    resetsAt: null,
+    inactive: true,
+  });
+  const later = Date.parse(current.capturedAt);
+  for (const [change, pattern] of [
+    [
+      (item) => {
+        item.accounts[1].windows[0].usedPercent = 30;
+      },
+      /20 percentage points/,
+    ],
+    [
+      (item) => {
+        item.accounts[0].windows[0].usedPercent = 71;
+      },
+      /30% remaining/,
+    ],
+    [
+      (item) => {
+        item.capturedAt = "2026-09-03T17:59:59Z";
+      },
+      /before its recorded reset/,
+    ],
+    [
+      (item) => {
+        item.capturedAt = "2026-09-03T18:06:01Z";
+      },
+      /future/,
+    ],
+    [
+      (item) => {
+        delete item.accounts[1].windows[1].inactive;
+      },
+      /unknown/,
+    ],
+    [
+      (item) => {
+        item.accounts[1].windows[0].resetsAt = "2026-09-14T00:00:00Z";
+      },
+      /rebase/,
+    ],
+  ]) {
+    const changed = structuredClone(current);
+    change(changed);
+    const result = evaluateQuota(baseline, changed, pilotPolicy.billing, later);
+    assert.equal(result.quotaAllowed, false);
+    assert.match(result.blockers.join("\n"), pattern);
+  }
+  assert.match(
+    evaluateQuota(baseline, current, pilotPolicy.billing, later + 301000).blockers.join("\n"),
+    /stale/,
+  );
+});
+
+test("contradictory inactive quota markers fail closed", () => {
+  for (const change of [
+    (window) => {
+      window.usedPercent = 1;
+    },
+    (window) => {
+      window.usedPercent = null;
+    },
+    (window) => {
+      window.resetsAt = "2026-09-03T18:00:00Z";
+    },
+    (window) => {
+      window.kind = "weekly";
+    },
+    (window) => {
+      window.inactive = "true";
+    },
+  ]) {
+    const current = snapshot();
+    Object.assign(current.accounts[1].windows[1], {
+      usedPercent: 0,
+      resetsAt: null,
+      inactive: true,
+    });
+    change(current.accounts[1].windows[1]);
+    assert.throws(() => evaluateQuota(snapshot(), current, pilotPolicy.billing, NOW), /Inactive/);
+  }
 });

@@ -19,3 +19,13 @@ test("case manifest hashing is order independent and includes file names", () =>
   assert.equal(caseIdentity(base), caseIdentity(reversed));
   assert.throws(() => caseFiles({ ...base, files: { "../escape": "bad" } }), /path/);
 });
+
+test("Python fixture instructions disable bytecode and disclose the submitted-file contract", () => {
+  for (const item of calibrationCases.filter((item) => item.runtime === "python")) {
+    const readme = caseFiles(item)["README.md"];
+    const command = /Run the existing tests with `([^`]+)`/.exec(readme)[1].split(" ");
+    assert.deepEqual(command, ["python3", "-B", "-m", "unittest", "discover", "-s", "app/api"]);
+    assert.match(readme, /Snapshots include untracked and binary files/);
+    assert.match(readme, /leave generated caches out of the source tree/);
+  }
+});

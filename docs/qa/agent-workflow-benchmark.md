@@ -92,9 +92,9 @@ removing a required feature does not fix the defect.
 
 The [pilot policy](../../tools/benchmark/pilot-policy.json) fixes this first batch:
 
-- Codex `gpt-5.6-sol` and Claude Code `claude-opus-5`, through subscription logins.
+- Exact models listed in the policy, through Codex and Claude Code subscription logins.
 - Five Code Scan cases: four repairs and one negative control, three workflows,
-  two agents, one repeat, totaling 30 trials.
+  one repeat, totaling 15 trials per model configuration.
 - Twenty minutes and three submitted candidates per trial. Tokens are measured;
   there is no separate token cap for this allowance-based batch.
 - No additional spending, API fallback, extra credits, or automatic usage resets.
