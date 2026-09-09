@@ -58,10 +58,6 @@ export function createPlan(study) {
   );
   if (study.continuation) {
     const continuation = study.continuation;
-    requireCondition(
-      study.phase !== "confirmatory",
-      "continuations cannot support confirmatory claims",
-    );
     requireText(continuation.sourceRun, "continuation source run");
     requireText(continuation.reason, "continuation reason");
     requireHash(continuation.sourceStudySha256, "source study digest");
@@ -90,6 +86,18 @@ export function createPlan(study) {
         "continuation must retain every executed assignment in order",
       );
       requireHash(record.recordSha256, "retained record digest");
+    }
+    if (study.phase === "confirmatory") {
+      const primaryKinds = study.analysis?.primaryKinds;
+      requireCondition(
+        Array.isArray(primaryKinds) &&
+          primaryKinds.length > 0 &&
+          continuation.retained.every((record) => {
+            const task = study.tasks.find((item) => item.id === record.task);
+            return task && !primaryKinds.includes(task.kind);
+          }),
+        "A continuation cannot retain assignments from the primary confirmatory population",
+      );
     }
     assignments = assignments.slice(continuation.retained.length);
   }

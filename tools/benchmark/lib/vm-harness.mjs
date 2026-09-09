@@ -44,6 +44,7 @@ export function deployHarness() {
     "repository-corpus",
     "repository-scanner-eligibility",
     "confirmatory-workflow",
+    "confirmatory-study-arguments",
   ])
     files[`lib/${name}.mjs`] = readFileSync(new URL(`./${name}.mjs`, import.meta.url), "utf8");
   files["pilot-policy.json"] = readFileSync(

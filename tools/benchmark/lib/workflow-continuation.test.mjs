@@ -37,6 +37,40 @@ test("a continuation schedules only the unrun suffix and preserves the original 
   assert.equal(validatePlan(plan), plan);
 });
 
+function confirmatoryPrefix(kind) {
+  const study = fixtureStudy();
+  study.phase = "confirmatory";
+  study.sitecmd.dirty = false;
+  study.registration = "registered fixture continuation";
+  study.sampleSizeRationale = "Fixture coverage only";
+  study.analysis = { primaryKinds: ["repair"] };
+  study.tasks = study.tasks.map((task) => ({ ...task, holdout: true }));
+  let source;
+  for (let seed = 0; seed < 1000; seed++) {
+    study.seed = seed;
+    source = createPlan(study);
+    const task = study.tasks.find((item) => item.id === source.assignments[0].task);
+    if (task.kind === kind) break;
+  }
+  const next = structuredClone(source.study);
+  next.runnerSha256 = digest("corrected controller");
+  const { id, ...assignment } = source.assignments[0];
+  next.continuation = {
+    sourceRun: "/owned/confirmatory-prefix",
+    sourceStudySha256: source.studySha256,
+    baselineSha256: digest("original allowance"),
+    reason: "Quota controller correction",
+    retained: [{ ...assignment, trialId: id, recordSha256: digest(id) }],
+  };
+  return next;
+}
+
+test("a confirmatory continuation may retain only assignments outside the primary population", () => {
+  const allowed = createPlan(confirmatoryPrefix("negative_control"));
+  assert.equal(allowed.study.continuation.retained.length, 1);
+  assert.throws(() => createPlan(confirmatoryPrefix("repair")), /primary confirmatory population/);
+});
+
 function storedPrefix(t) {
   const root = mkdtempSync(path.join(os.tmpdir(), "sitecmd-continuation-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));

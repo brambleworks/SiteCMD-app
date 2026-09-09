@@ -1,11 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { validateConfirmatoryWorkflowCase } from "./lib/confirmatory-workflow.mjs";
+import { confirmatoryStudyArguments } from "./lib/confirmatory-study-arguments.mjs";
 import { validateRepositoryConfirmatoryCorpus } from "./lib/repository-corpus.mjs";
 import { repositoryGraderIdentity } from "./lib/repository-grader-identity.mjs";
 import { deriveRepositoryReference } from "./lib/repository-reference.mjs";
 import { validateRepositorySnapshot } from "./lib/repository-snapshot.mjs";
 import { artifactPath, readArtifact } from "./lib/workflow-artifacts.mjs";
+import { describeContinuation } from "./lib/workflow-continuation.mjs";
 import { confirmatoryStudyPolicy } from "./lib/workflow-confirmatory-study.mjs";
 import { validateRunnableStudy } from "./lib/workflow-runnable-study.mjs";
 import { requireCondition } from "./lib/workflow-contract.mjs";
@@ -14,27 +16,16 @@ import { createStudyRun, writeNewJson } from "./lib/workflow-store.mjs";
 import { trialConfigurations } from "./lib/trial-invocation.mjs";
 import { deployHarness } from "./lib/vm-harness.mjs";
 
-const [
+const {
   screeningDirectory,
   eligibilityDirectory,
   qualificationDirectory,
   workflowDirectory,
   output,
   productFile,
-  ...extra
-] = process.argv.slice(2);
-if (
-  !screeningDirectory ||
-  !eligibilityDirectory ||
-  !qualificationDirectory ||
-  !workflowDirectory ||
-  !output ||
-  !productFile ||
-  extra.length
-)
-  throw new Error(
-    "Usage: prepare-confirmatory-study.mjs SCREENING_DIRECTORY ELIGIBILITY_DIRECTORY QUALIFICATION_DIRECTORY WORKFLOW_DIRECTORY NEW_RUN_DIRECTORY PRODUCT_RECEIPT",
-  );
+  continueFrom,
+  reason,
+} = confirmatoryStudyArguments(process.argv.slice(2));
 const run = path.resolve(output);
 requireCondition(!existsSync(run), "Confirmatory run directory must be new");
 const rootFor = (directory, receipt) =>
@@ -94,9 +85,9 @@ requireCondition(
     workflowHarness.id === workflow.harnessSha256,
   "Stored qualification or workflow harness identity is invalid",
 );
-const protocol = readFileSync(
-  new URL("../../docs/qa/agent-workflow-benchmark.md", import.meta.url),
-);
+const protocol = continueFrom
+  ? readFileSync(path.join(path.resolve(continueFrom), "inputs", "protocol.md"))
+  : readFileSync(new URL("../../docs/qa/agent-workflow-benchmark.md", import.meta.url));
 const frozenCorpus = [];
 const tasks = [];
 const reports = new Map();
@@ -257,6 +248,7 @@ const study = {
   ),
   tasks,
 };
+if (continueFrom) study.continuation = describeContinuation(continueFrom, study, reason);
 validateRunnableStudy(study);
 const plan = createStudyRun(study, run);
 mkdirSync(path.join(run, "inputs"), { mode: 0o700 });
@@ -283,7 +275,21 @@ writeFileSync(path.join(run, "inputs", "protocol.md"), protocol, {
 });
 const emptyQuota = JSON.parse(readFileSync(new URL("./quota-template.json", import.meta.url)));
 for (const name of ["quota-baseline.json", "quota-current.json"])
-  writeNewJson(path.join(run, name), emptyQuota);
+  writeNewJson(
+    path.join(run, name),
+    study.continuation
+      ? JSON.parse(readFileSync(path.join(study.continuation.sourceRun, name)))
+      : emptyQuota,
+  );
+if (study.continuation) {
+  writeFileSync(path.join(run, "quota-baseline.sha256"), study.continuation.baselineSha256, {
+    flag: "wx",
+    mode: 0o600,
+  });
+  const prior = path.join(study.continuation.sourceRun, "prior-attempts.json");
+  if (existsSync(prior))
+    writeNewJson(path.join(run, "prior-attempts.json"), JSON.parse(readFileSync(prior)));
+}
 console.log(
   `Frozen ${plan.plannedTrials} confirmatory assignments at ${run}. No model calls made. Fresh quota evidence is required before execution.`,
 );

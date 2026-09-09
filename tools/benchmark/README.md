@@ -161,6 +161,14 @@ snapshot with `inactive: true` and `resetsAt: null`. This is allowed after its
 recorded reset, or when the baseline already records it as inactive. Missing or
 contradictory state still blocks execution; weekly windows always need a reset date.
 
+Some providers expose rolling weekly meters whose next-reset timestamp changes as
+older usage expires. When that happens, add `accountingEpochs` to the weekly window.
+The first epoch starts at the frozen baseline percentage and reset timestamp; every
+later epoch starts at zero. Keep the highest observed percentage for each epoch.
+The checker sums those high-water deltas, so a rolling window or earned reset never
+replenishes the study allowance. Refreshers must append epochs and must not remove
+or lower an earlier peak.
+
 Freeze `quota-baseline.json` before the first real trial. Save a new current snapshot
 before and after every trial and at each submission; do not overwrite the baseline.
 Keep snapshots with the trial evidence, including readings that paused the batch.
@@ -170,9 +178,9 @@ pnpm benchmark quota --baseline tools/benchmark/.work/calibration-run/quota-base
 ```
 
 Exit 0 means only that the supplied quota readings passed. Exit 2 means pause;
-invalid input exits 1. Readings older than five minutes, changed accounts or weekly
-resets, unknown extra usage, or either account reaching a stop threshold block the
-batch. A short-session reset does not replenish the weekly allocation. These are
+invalid input exits 1. Readings older than five minutes, changed accounts, an
+unaccounted weekly transition, unknown extra usage, or either account reaching a
+stop threshold block the batch. A short-session reset does not replenish the weekly allocation. These are
 checks made by the quota command, not a live quota collector or process supervisor.
 The VM executor enforces the time/submission limits, stops on reported rate limits,
 and never requests a fallback model. Provider percentages are not precise
@@ -486,6 +494,12 @@ then use `pnpm benchmark:run RUN_DIRECTORY` once per assignment. The first actua
 response establishes model availability; the runner never substitutes a fallback.
 This single historical task can expose executor or workflow failures and estimate
 case-specific behavior. It cannot support a general product or marketing claim.
+
+The confirmatory runner also accepts `--continue-from` and `--reason` after a
+controller-only correction. It retains the complete executed prefix and the
+original allowance. A confirmatory continuation is permitted only when every
+retained assignment falls outside the preregistered primary population, so no
+primary repair assignment can be replaced or rerun under a different controller.
 
 ## Retired repository confirmation
 

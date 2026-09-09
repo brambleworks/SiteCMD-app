@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { evaluateQuota } from "./workflow-quota.mjs";
+import {
+  carryForwardQuotaUsage,
+  evaluateQuota,
+  verifyQuotaUsageContinuity,
+} from "./workflow-quota.mjs";
 import { pilotPolicy } from "./workflow-pilot.mjs";
 
 const NOW = Date.parse("2026-09-03T16:00:00Z");
@@ -298,4 +302,120 @@ test("contradictory inactive quota markers fail closed", () => {
     change(current.accounts[1].windows[1]);
     assert.throws(() => evaluateQuota(snapshot(), current, pilotPolicy.billing, NOW), /Inactive/);
   }
+});
+
+test("weekly quota epochs carry consumed allowance across a rolling window", () => {
+  const baseline = snapshot("2026-09-03T15:00:00Z");
+  const current = snapshot();
+  Object.assign(current.accounts[0].windows[0], {
+    usedPercent: 3,
+    resetsAt: "2026-09-06T00:00:00Z",
+    accountingEpochs: [
+      {
+        resetsAt: "2026-09-07T00:00:00Z",
+        startUsedPercent: 10,
+        peakUsedPercent: 12,
+      },
+      {
+        resetsAt: "2026-09-06T00:00:00Z",
+        startUsedPercent: 0,
+        peakUsedPercent: 3,
+      },
+    ],
+  });
+  assert.equal(evaluateQuota(baseline, current, pilotPolicy.billing, NOW).quotaAllowed, true);
+  current.accounts[0].windows[0].usedPercent = 18;
+  current.accounts[0].windows[0].accountingEpochs[1].peakUsedPercent = 18;
+  const blocked = evaluateQuota(baseline, current, pilotPolicy.billing, NOW);
+  assert.equal(blocked.quotaAllowed, false);
+  assert.match(blocked.blockers.join("\n"), /20 percentage points/);
+});
+
+test("weekly quota epoch accounting fails closed when its history is incomplete", () => {
+  for (const change of [
+    (epochs) => {
+      epochs[0].startUsedPercent = 9;
+    },
+    (epochs) => {
+      epochs[0].resetsAt = "2026-09-05T00:00:00Z";
+    },
+    (epochs) => {
+      epochs[1].resetsAt = "2026-09-05T00:00:00Z";
+    },
+    (epochs) => {
+      epochs[1].startUsedPercent = 1;
+    },
+    (epochs) => {
+      epochs[1].peakUsedPercent = 2;
+    },
+    (epochs) => {
+      epochs.push(structuredClone(epochs[1]));
+    },
+  ]) {
+    const baseline = snapshot("2026-09-03T15:00:00Z");
+    const current = snapshot();
+    Object.assign(current.accounts[0].windows[0], {
+      usedPercent: 3,
+      resetsAt: "2026-09-06T00:00:00Z",
+      accountingEpochs: [
+        {
+          resetsAt: "2026-09-07T00:00:00Z",
+          startUsedPercent: 10,
+          peakUsedPercent: 12,
+        },
+        {
+          resetsAt: "2026-09-06T00:00:00Z",
+          startUsedPercent: 0,
+          peakUsedPercent: 3,
+        },
+      ],
+    });
+    change(current.accounts[0].windows[0].accountingEpochs);
+    assert.throws(() => evaluateQuota(baseline, current, pilotPolicy.billing, NOW));
+  }
+});
+
+test("quota carry-forward appends rolling epochs and never lowers their peaks", () => {
+  const baseline = snapshot("2026-09-03T15:00:00Z");
+  const beforeRollover = snapshot("2026-09-03T15:30:00Z");
+  beforeRollover.accounts[0].windows[0].usedPercent = 12;
+  const afterRollover = snapshot();
+  Object.assign(afterRollover.accounts[0].windows[0], {
+    usedPercent: 2,
+    resetsAt: "2026-09-06T00:00:00Z",
+  });
+  const carried = carryForwardQuotaUsage(baseline, beforeRollover, afterRollover);
+  assert.deepEqual(carried.accounts[0].windows[0].accountingEpochs, [
+    {
+      resetsAt: "2026-09-07T00:00:00Z",
+      startUsedPercent: 10,
+      peakUsedPercent: 12,
+    },
+    {
+      resetsAt: "2026-09-06T00:00:00Z",
+      startUsedPercent: 0,
+      peakUsedPercent: 2,
+    },
+  ]);
+
+  const later = snapshot("2026-09-03T16:01:00Z");
+  Object.assign(later.accounts[0].windows[0], {
+    usedPercent: 3,
+    resetsAt: "2026-09-06T00:00:00Z",
+  });
+  const advanced = carryForwardQuotaUsage(baseline, carried, later);
+  assert.equal(advanced.accounts[0].windows[0].accountingEpochs[1].peakUsedPercent, 3);
+
+  const roundedDown = snapshot("2026-09-03T16:02:00Z");
+  Object.assign(roundedDown.accounts[0].windows[0], {
+    usedPercent: 2,
+    resetsAt: "2026-09-06T00:00:00Z",
+  });
+  const conservative = carryForwardQuotaUsage(baseline, advanced, roundedDown);
+  assert.equal(conservative.accounts[0].windows[0].accountingEpochs[1].peakUsedPercent, 3);
+  assert.equal(verifyQuotaUsageContinuity(baseline, advanced, conservative), conservative);
+
+  const tampered = structuredClone(conservative);
+  tampered.accounts[0].windows[0].accountingEpochs[0].peakUsedPercent = 11;
+  assert.throws(() => verifyQuotaUsageContinuity(baseline, advanced, tampered), /history changed/);
 });

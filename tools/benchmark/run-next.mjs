@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { digest } from "./lib/workflow-plan.mjs";
-import { evaluateQuota } from "./lib/workflow-quota.mjs";
+import { evaluateQuota, verifyQuotaUsageContinuity } from "./lib/workflow-quota.mjs";
 import { validateRunnableStudy } from "./lib/workflow-runnable-study.mjs";
 import { loadPlan, loadResults } from "./lib/workflow-store.mjs";
 import { exportGuestTrial } from "./lib/vm-trial-export.mjs";
@@ -84,7 +84,8 @@ child.stdout.on("data", (chunk) => {
   if (output.length > 1024 * 1024) child.kill("SIGTERM");
 });
 child.stderr.pipe(process.stderr);
-let previous = digest(current);
+let previousSnapshot = current;
+let previous = digest(previousSnapshot);
 let syncing = false;
 const timer = setInterval(() => {
   if (syncing) return;
@@ -93,6 +94,7 @@ const timer = setInterval(() => {
     const snapshot = JSON.parse(readFileSync(currentPath));
     if (digest(snapshot) !== previous) {
       evaluateQuota(baseline, snapshot, plan.study.billing);
+      verifyQuotaUsageContinuity(baseline, previousSnapshot, snapshot);
       guestCommand(["sudo", "node", `${harness.directory}/update-quota.mjs`], {
         input: JSON.stringify({
           directory: `/srv/sitecmd-benchmark/trials/${assignment.id}`,
@@ -101,6 +103,7 @@ const timer = setInterval(() => {
         }),
         capture: true,
       });
+      previousSnapshot = snapshot;
       previous = digest(snapshot);
     }
   } catch (error) {
