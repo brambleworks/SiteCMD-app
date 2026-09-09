@@ -27,14 +27,44 @@ const TRAILER = /^(?:Co-authored-by|Signed-off-by|Reviewed-by|Refs|Closes|Fixes)
 // so a grouped update carrying a single dependency names the package, both
 // versions, and the group, which runs past the length a human subject is held
 // to. These shapes are already imperative, colon-free plain English; only the
-// length allowance is relaxed, and only for a title that matches exactly.
-const DEPENDENCY_BUMP = [
-  /^Bump \S+ from \S+ to \S+(?: in the \S+ group)?$/,
-  /^Bump the \S+ group (?:across \d+ director(?:y|ies) )?with \d+ updates?$/,
-];
+// length allowance is relaxed, and only for a title matching one of them
+// exactly. Matched by word shape rather than by pattern, because the adjacent
+// unbounded runs a pattern would need are what the regex audit rejects.
+const UPDATE_NOUN = new Set(["update", "updates"]);
+const DIRECTORY_NOUN = new Set(["directory", "directories"]);
+
+function isCount(value) {
+  if (value === "") return false;
+  for (const character of value) {
+    if (character < "0" || character > "9") return false;
+  }
+  return true;
+}
 
 function isDependencyBump(subject) {
-  return DEPENDENCY_BUMP.some((pattern) => pattern.test(subject));
+  const words = subject.split(" ");
+  if (words[0] !== "Bump" || words.includes("")) return false;
+
+  // Bump <dependency> from <old> to <new>[ in the <group> group]
+  if (words[2] === "from" && words[4] === "to") {
+    if (words.length === 6) return true;
+    return words.length === 10 && words[6] === "in" && words[7] === "the" && words[9] === "group";
+  }
+
+  // Bump the <group> group [across <count> director(y|ies) ]with <count> update(s)
+  if (words[1] !== "the" || words[3] !== "group") return false;
+  if (words.length === 7) {
+    return words[4] === "with" && isCount(words[5]) && UPDATE_NOUN.has(words[6]);
+  }
+  return (
+    words.length === 10 &&
+    words[4] === "across" &&
+    isCount(words[5]) &&
+    DIRECTORY_NOUN.has(words[6]) &&
+    words[7] === "with" &&
+    isCount(words[8]) &&
+    UPDATE_NOUN.has(words[9])
+  );
 }
 
 function visibleLines(message) {
