@@ -3,8 +3,183 @@ use super::*;
 /// React's raw-HTML prop, the only sink the JSON-LD exemption below can excuse.
 const REACT_RAW_HTML_SINK: &str = "dangerouslySetInnerHTML";
 
+/// The DOM assignment sink whose complete literals are exempt.
+const DOM_RAW_HTML_SINK: &str = "innerHTML";
+
 /// How far the JSON-LD exemption looks around a sink, in bytes.
 const JSON_LD_SINK_WINDOW: usize = 200;
+
+/// How far a raw-HTML sink can look for its own value or sanitizer.
+const RAW_HTML_SINK_WINDOW: usize = 240;
+
+/// Raw-HTML sink positions that still need review after local exemptions.
+pub(in crate::core::code_scan) fn unsafe_html_sink_offsets(content: &str) -> Vec<usize> {
+    let mut sinks = DANGEROUS_HTML_PATTERNS
+        .iter()
+        .flat_map(|pattern| pattern.find_iter(content))
+        .filter(|matched| is_executable_sink(content, matched))
+        .map(|matched| matched.start())
+        .collect::<Vec<_>>();
+    sinks.sort_unstable();
+    sinks.dedup();
+
+    let all_sinks = sinks.clone();
+    sinks.retain(|start| {
+        !is_serialized_json_ld_sink_at(content, *start)
+            && !is_static_raw_html_sink_at(content, *start)
+            && !sink_has_local_sanitization(content, *start, &all_sinks)
+    });
+    sinks
+}
+
+fn is_executable_sink(content: &str, matched: &regex::Match<'_>) -> bool {
+    let markup_delimited =
+        matched.as_str().starts_with("<?=") || matched.as_str().starts_with("{!!");
+    let preceding = content[..matched.start()].chars().next_back();
+    if markup_delimited {
+        !matches!(preceding, Some('`'))
+    } else {
+        !matches!(preceding, Some('"' | '\'' | '`'))
+    }
+}
+
+fn is_static_raw_html_sink_at(content: &str, start: usize) -> bool {
+    let window = sink_window(content, start, &[]);
+    if content[start..].starts_with(REACT_RAW_HTML_SINK) {
+        return RAW_HTML_STATIC_VALUE_PATTERN.is_match(window);
+    }
+    content[start..].starts_with(DOM_RAW_HTML_SINK) && inner_html_value_is_complete_literal(window)
+}
+
+fn inner_html_value_is_complete_literal(window: &str) -> bool {
+    let Some((_, value)) = window.split_once('=') else {
+        return false;
+    };
+    let value = value.trim_start();
+    let Some(quote) = value
+        .chars()
+        .next()
+        .filter(|character| matches!(character, '\'' | '"' | '`'))
+    else {
+        return false;
+    };
+    let mut escaped = false;
+    let mut interpolated = false;
+    let mut previous = None;
+    for (offset, character) in value[quote.len_utf8()..].char_indices() {
+        if escaped {
+            escaped = false;
+            previous = Some(character);
+            continue;
+        }
+        if character == '\\' {
+            escaped = true;
+            previous = Some(character);
+            continue;
+        }
+        if quote == '`' && previous == Some('$') && character == '{' {
+            interpolated = true;
+        }
+        if character == quote {
+            let remainder = value[quote.len_utf8() + offset + character.len_utf8()..].trim();
+            return !interpolated && (remainder.is_empty() || remainder == ";");
+        }
+        previous = Some(character);
+    }
+    false
+}
+
+fn sink_has_local_sanitization(content: &str, start: usize, sinks: &[usize]) -> bool {
+    let window = sink_window(content, start, sinks);
+    has_any(window, &SANITIZATION_PATTERNS)
+        || sink_value_identifier(window).is_some_and(|identifier| {
+            previous_assignment(content, start, identifier)
+                .is_some_and(|assignment| has_any(assignment, &SANITIZATION_PATTERNS))
+        })
+}
+
+fn sink_value_identifier(window: &str) -> Option<&str> {
+    let (_, value) = window.split_once('=')?;
+    let value = value.trim_start();
+    let end = value
+        .find(|character: char| {
+            !character.is_ascii_alphanumeric() && character != '_' && character != '$'
+        })
+        .unwrap_or(value.len());
+    let identifier = &value[..end];
+    let remainder = value[end..].trim();
+    (!identifier.is_empty() && (remainder.is_empty() || remainder == ";")).then_some(identifier)
+}
+
+fn previous_assignment<'a>(content: &'a str, start: usize, identifier: &str) -> Option<&'a str> {
+    const ASSIGNMENT_LOOKBACK: usize = 2_000;
+    let floor = start.saturating_sub(ASSIGNMENT_LOOKBACK);
+    let preceding = &content[floor..start];
+    let pattern = regex::Regex::new(&format!(
+        r"\b(?:const|let|var)\s+{}\s*=",
+        regex::escape(identifier)
+    ))
+    .ok()?;
+    let assignment_start = pattern.find_iter(preceding).last()?.start();
+    let assignment = &preceding[assignment_start..];
+    let end = assignment.find(';').unwrap_or(assignment.len());
+    Some(&assignment[..end])
+}
+
+fn sink_window<'a>(content: &'a str, start: usize, sinks: &[usize]) -> &'a str {
+    let next_sink = sinks.iter().copied().find(|candidate| *candidate > start);
+    let mut end = next_sink
+        .unwrap_or(content.len())
+        .min(start.saturating_add(RAW_HTML_SINK_WINDOW))
+        .min(content.len());
+    while !content.is_char_boundary(end) {
+        end += 1;
+    }
+    end = sink_boundary_end(content, start, end).unwrap_or(end);
+    &content[start..end]
+}
+
+fn sink_boundary_end(content: &str, start: usize, hard_end: usize) -> Option<usize> {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut delimiters = Vec::new();
+    let mut previous = None;
+
+    for (offset, character) in content[start..hard_end].char_indices() {
+        if let Some(active_quote) = quote {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == active_quote {
+                quote = None;
+            }
+            previous = Some(character);
+            continue;
+        }
+
+        match character {
+            '\'' | '"' | '`' => quote = Some(character),
+            '(' | '[' | '{' => delimiters.push(character),
+            ')' => close_delimiter(&mut delimiters, '('),
+            ']' => close_delimiter(&mut delimiters, '['),
+            '}' => close_delimiter(&mut delimiters, '{'),
+            ';' if delimiters.is_empty() => return Some(start + offset + character.len_utf8()),
+            '>' if delimiters.is_empty() && previous != Some('=') => {
+                return Some(start + offset + character.len_utf8());
+            }
+            _ => {}
+        }
+        previous = Some(character);
+    }
+    None
+}
+
+fn close_delimiter(delimiters: &mut Vec<char>, expected: char) {
+    if delimiters.last() == Some(&expected) {
+        delimiters.pop();
+    }
+}
 
 /// A `<script type="application/ld+json">` element whose
 /// `REACT_RAW_HTML_SINK` prop carries `{{ __html: JSON.stringify(...) }}` is the

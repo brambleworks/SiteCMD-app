@@ -93,6 +93,8 @@ export function CodeIssueDossier({
     envUrl: normalizedUrl,
     checkId: issue.checkId,
     title: issue.title,
+    targetRelativePath: issue.relativePath,
+    targetLine: issue.line,
   });
   const queueCodePending = useCallback(
     (reason: string, target: CodeIssue) => {

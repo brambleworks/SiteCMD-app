@@ -83,6 +83,162 @@ fn detects_open_cors_with_credentials() {
 }
 
 #[test]
+fn detects_fastapi_cors_wildcard_with_credentials() {
+    let temp = TempDir::new().unwrap();
+    write_file(
+        temp.path(),
+        "lightrag/api/lightrag_server.py",
+        r#"from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI()
+
+def get_cors_origins():
+    if global_args.cors_origins == "*":
+        return ["*"]
+    return global_args.cors_origins.split(",")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=get_cors_origins(),
+    allow_credentials=True,
+)
+"#,
+    );
+
+    let report = audit_project(temp.path()).unwrap();
+    assert!(
+        report
+            .issues
+            .iter()
+            .any(|issue| issue.id.starts_with("cors-credentials-wildcard:")),
+        "FastAPI's wildcard and credential settings should be recognized: {:?}",
+        report
+            .issues
+            .iter()
+            .map(|issue| &issue.id)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn skips_fastapi_cors_fix_and_explanatory_comments() {
+    let temp = TempDir::new().unwrap();
+    write_file(
+        temp.path(),
+        "lightrag/api/lightrag_server.py",
+        r#"from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI()
+
+def get_cors_origins():
+    if global_args.cors_origins == "*":
+        return ["*"]
+    return global_args.cors_origins.split(",")
+
+cors_origins = get_cors_origins()
+# Never combine Access-Control-Allow-Origin: * with
+# Access-Control-Allow-Credentials: true.
+allow_credentials = cors_origins != ["*"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins,
+    allow_credentials=allow_credentials,
+)
+"#,
+    );
+
+    let report = audit_project(temp.path()).unwrap();
+    assert!(
+        !report
+            .issues
+            .iter()
+            .any(|issue| issue.id.starts_with("cors-credentials-wildcard:")),
+        "the guarded setting and its comment should not look vulnerable: {:?}",
+        report
+            .issues
+            .iter()
+            .map(|issue| &issue.id)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn detects_fastapi_cors_wildcard_and_credentials_from_config_defaults() {
+    let temp = TempDir::new().unwrap();
+    write_file(
+        temp.path(),
+        "glances/outputs/glances_restful_api.py",
+        r#"from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+self._app = FastAPI()
+self._app.add_middleware(
+    CORSMiddleware,
+    allow_origins=config.get_list_value('outputs', 'cors_origins', default=["*"]),
+    allow_credentials=config.get_bool_value('outputs', 'cors_credentials', default=True),
+)
+"#,
+    );
+
+    let report = audit_project(temp.path()).unwrap();
+    assert!(
+        report
+            .issues
+            .iter()
+            .any(|issue| issue.id.starts_with("cors-credentials-wildcard:")),
+        "insecure FastAPI configuration defaults should be recognized: {:?}",
+        report
+            .issues
+            .iter()
+            .map(|issue| &issue.id)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn skips_guarded_fastapi_cors_config_and_warning_text() {
+    let temp = TempDir::new().unwrap();
+    write_file(
+        temp.path(),
+        "glances/outputs/glances_restful_api.py",
+        r#"from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+self._app = FastAPI()
+cors_origins = config.get_list_value('outputs', 'cors_origins', default=["*"])
+cors_credentials = config.get_bool_value('outputs', 'cors_credentials', default=False)
+if cors_origins == ["*"] and cors_credentials:
+    logger.warning(
+        "CORS: allow_origins=['*'] combined with allow_credentials=True is insecure."
+    )
+    cors_credentials = False
+
+self._app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins,
+    allow_credentials=cors_credentials,
+)
+"#,
+    );
+
+    let report = audit_project(temp.path()).unwrap();
+    assert!(
+        !report
+            .issues
+            .iter()
+            .any(|issue| issue.id.starts_with("cors-credentials-wildcard:")),
+        "guarded configuration and warning text should stay quiet: {:?}",
+        report
+            .issues
+            .iter()
+            .map(|issue| &issue.id)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn detects_multi_write_flow_without_transaction_and_missing_test() {
     let temp = TempDir::new().unwrap();
     write_file(

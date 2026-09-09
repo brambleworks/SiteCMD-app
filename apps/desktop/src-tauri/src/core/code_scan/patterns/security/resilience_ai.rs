@@ -34,6 +34,10 @@ pub(in crate::core::code_scan) static TLS_VERIFICATION_DISABLED_PATTERNS: LazyLo
         .expect("static requests verify regex"), // allow-expect: compile-time literal regex
         regex::Regex::new(r"\.verify\s*=\s*False\b")
             .expect("static session verify regex"), // allow-expect: compile-time literal regex
+        regex::Regex::new(
+            r"\bssl\._create_default_https_context\s*=\s*ssl\._create_unverified_context\b",
+        )
+        .expect("static Python HTTPS context regex"), // allow-expect: compile-time literal regex
         regex::Regex::new(r"CURLOPT_SSL_VERIFY(?:PEER|HOST)\s*(?:,|=>)\s*(?:false|0)\b")
             .expect("static curlopt regex"), // allow-expect: compile-time literal regex
         regex::Regex::new(r"InsecureSkipVerify\s*:\s*true")

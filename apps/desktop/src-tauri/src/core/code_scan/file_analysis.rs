@@ -347,16 +347,21 @@ pub(super) fn analyze_file(
 /// evidence, and the patterns that must ignore quoted data already use
 /// `has_any_unquoted`. PHP and Python sink checks build their own views.
 fn code_view_for_analysis(file: &SourceFile) -> Option<SourceFile> {
-    if !is_js_or_ts_file(&file.relative_path) {
+    let path = file.relative_path.to_ascii_lowercase();
+    let content = if path.ends_with(".py") {
+        blank_python(&file.content, false)
+    } else if is_js_or_ts_file(&file.relative_path) {
+        js_sinks::blank_js(&file.content, false)
+    } else {
         return None;
-    }
-    if !file.content.contains("//") && !file.content.contains("/*") {
+    };
+    if content == file.content {
         return None;
     }
     Some(SourceFile {
         absolute_path: file.absolute_path.clone(),
         relative_path: file.relative_path.clone(),
-        content: js_sinks::blank_js(&file.content, false),
+        content,
         line_count: file.line_count,
     })
 }

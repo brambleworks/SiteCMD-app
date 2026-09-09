@@ -21,6 +21,7 @@ fn attempt_row(check_id: &str, env_url: &str) -> FixAttemptRow {
         target_kind: "group".to_string(),
         target_relative_path: None,
         target_line: None,
+        target_occurrence_count: None,
         agent_tool: "claude-code".to_string(),
         status: "verifying".to_string(),
         brief_md: String::new(),
@@ -38,6 +39,19 @@ fn occurrence_attempt_row(check_id: &str, env_url: &str, path: &str) -> FixAttem
     row.target_kind = "occurrence".to_string();
     row.target_relative_path = Some(path.to_string());
     row
+}
+
+#[test]
+fn only_group_attempts_update_group_lifecycle_on_success() {
+    let group = attempt_row("security.csp", "https://example.com");
+    let occurrence = occurrence_attempt_row(
+        "code_scan.unsafe-html",
+        "https://example.com",
+        "src/view.tsx",
+    );
+
+    assert!(should_mark_group_verified(&group));
+    assert!(!should_mark_group_verified(&occurrence));
 }
 
 // Failure detail must distinguish undeployed remote fixes from local recheck failures.

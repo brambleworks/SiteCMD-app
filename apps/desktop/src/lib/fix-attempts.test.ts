@@ -62,6 +62,7 @@ describe("getFixAttemptForIssue", () => {
       "https://example.com",
       "security.csp",
       "Missing Content-Security-Policy",
+      { path: "src/view.tsx", line: 18 },
     );
 
     expect(invokeMock).toHaveBeenCalledWith("get_fix_attempt_for_issue", {
@@ -69,6 +70,8 @@ describe("getFixAttemptForIssue", () => {
       envUrl: "https://example.com",
       checkId: "security.csp",
       title: "Missing Content-Security-Policy",
+      targetRelativePath: "src/view.tsx",
+      targetLine: 18,
     });
     expect(attempt).toBeNull();
   });

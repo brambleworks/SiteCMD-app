@@ -453,7 +453,7 @@ fn migration_022_makes_an_unbound_or_contradictory_recorded_decision_unwritable(
 }
 
 #[test]
-fn migration_015_collapses_line_shifted_active_fix_targets() {
+fn migration_029_restores_independent_lines_after_the_v15_path_identity() {
     let conn = Connection::open_in_memory().expect("open in-memory db");
     super::ensure_version_table(&conn).expect("version table");
     super::apply_pending(&conn, &super::MIGRATIONS[..14], 0).expect("upgrade through v14");
@@ -478,7 +478,7 @@ fn migration_015_collapses_line_shifted_active_fix_targets() {
         .expect("v14 index permits distinct line snapshots");
     }
 
-    super::apply_pending(&conn, &super::MIGRATIONS[14..], 14).expect("apply v15");
+    super::apply_pending(&conn, &super::MIGRATIONS[14..15], 14).expect("apply v15");
 
     let statuses = conn
         .prepare("SELECT status FROM fix_attempts ORDER BY updated_at")
@@ -502,8 +502,22 @@ fn migration_015_collapses_line_shifted_active_fix_targets() {
     );
     assert!(
         duplicate.is_err(),
-        "line changes must not create a second active attempt for one file"
+        "v15 treated line movement as one file-scoped attempt"
     );
+
+    super::apply_pending(&conn, &super::MIGRATIONS[15..], 15).expect("upgrade through v29");
+    conn.execute(
+        "INSERT INTO fix_attempts (
+            project_id, env_url, check_id, target_kind,
+            target_relative_path, target_line, agent_tool, status,
+            created_at, updated_at
+         ) VALUES (
+            1, 'https://example.com', 'code_scan.hardcoded-secret',
+            'occurrence', 'src/a.ts', 99, 'codex', 'briefed', 3000, 3000
+         )",
+        [],
+    )
+    .expect("v29 permits a separate active line occurrence");
 }
 
 #[test]

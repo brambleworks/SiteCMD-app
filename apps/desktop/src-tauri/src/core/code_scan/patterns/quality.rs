@@ -204,15 +204,17 @@ pub(in crate::core::code_scan) static EVAL_EXEC_PATTERNS: LazyLock<Vec<regex::Re
         ]
     });
 
-// These are call patterns only; shell-injection also requires a child_process
-// import. Python sinks are graded by their dedicated check.
-pub(in crate::core::code_scan) static EXEC_SPAWN_PATTERNS: LazyLock<Vec<regex::Regex>> =
+// These are shell-backed process calls only; shell-injection also requires a
+// child_process import. Python sinks are graded by their dedicated check.
+pub(in crate::core::code_scan) static SHELL_COMMAND_PATTERNS: LazyLock<Vec<regex::Regex>> =
     LazyLock::new(|| {
         vec![
             regex::Regex::new(r"(?i)\bexec\s*\(").unwrap(),
             regex::Regex::new(r"(?i)\bexecSync\s*\(").unwrap(),
-            regex::Regex::new(r"(?i)\bspawn\s*\(").unwrap(),
-            regex::Regex::new(r"(?i)\bspawnSync\s*\(").unwrap(),
+            regex::Regex::new(
+                r"(?is)\b(?:spawn|spawnSync|execFile|execFileSync)\s*\([^;]{0,800}\bshell\s*:\s*true",
+            )
+            .unwrap(),
         ]
     });
 

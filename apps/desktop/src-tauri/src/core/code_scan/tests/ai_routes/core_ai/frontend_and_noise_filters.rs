@@ -589,14 +589,27 @@ fn skips_unsafe_html_for_json_ld_scripts_serialized_with_json_stringify() {
     );
     assert!(
         ids.iter()
-            .any(|id| id.as_str() == "unsafe-html:components/RichText.tsx"),
+            .any(|id| id.starts_with("unsafe-html:components/RichText.tsx:")),
         "negative control: a raw HTML sink beside JSON-LD keeps the finding, got {:?}",
         ids
     );
     assert!(
         ids.iter()
-            .any(|id| id.as_str() == "unsafe-html:components/ProfileCard.tsx"),
+            .any(|id| id.starts_with("unsafe-html:components/ProfileCard.tsx:")),
         "negative control: serialized JSON in a plain element is still a markup sink, got {:?}",
         ids
     );
+
+    let mixed_sink_lines = report
+        .issues
+        .iter()
+        .filter(|issue| {
+            issue
+                .id
+                .starts_with("unsafe-html:components/ProfileCard.tsx:")
+                || issue.id.starts_with("unsafe-html:components/RichText.tsx:")
+        })
+        .map(|issue| issue.line)
+        .collect::<Vec<_>>();
+    assert_eq!(mixed_sink_lines, [Some(6), Some(6)]);
 }

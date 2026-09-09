@@ -201,3 +201,55 @@ export async function POST(req: Request) {
         issue_ids(&report)
     );
 }
+
+#[test]
+fn fixed_spawn_without_a_shell_is_not_flagged_as_shell_injection() {
+    let temp = TempDir::new().unwrap();
+    write_file(
+        temp.path(),
+        "app/api/install/route.ts",
+        r#"import { spawn } from "child_process";
+
+export async function POST(req: Request) {
+  const body = await req.json();
+  spawn("npx", ["tool@latest", "--agent", body.agent], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return Response.json({ ok: true });
+}
+"#,
+    );
+
+    let report = audit_project(temp.path()).unwrap();
+    assert!(
+        !has_issue(&report, "shell-injection:"),
+        "fixed spawn with argument boundaries should stay quiet: {:?}",
+        issue_ids(&report)
+    );
+}
+
+#[test]
+fn indirect_spawn_with_shell_true_remains_a_shell_injection_signal() {
+    let temp = TempDir::new().unwrap();
+    write_file(
+        temp.path(),
+        "app/api/install/route.ts",
+        r#"import { spawn } from "child_process";
+
+export async function POST(req: Request) {
+  const body = await req.json();
+  spawn("npx", ["tool@latest", "--agent", body.agent], {
+    shell: true,
+  });
+  return Response.json({ ok: true });
+}
+"#,
+    );
+
+    let report = audit_project(temp.path()).unwrap();
+    assert!(
+        has_issue(&report, "shell-injection:"),
+        "shell-backed spawn should keep the review signal: {:?}",
+        issue_ids(&report)
+    );
+}

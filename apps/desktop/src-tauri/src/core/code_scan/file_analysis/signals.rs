@@ -68,7 +68,6 @@ pub(super) struct FileAnalysisSignals {
     pub(super) has_transaction: bool,
     pub(super) has_unsafe_raw_sql: bool,
     pub(super) dangerous_html: bool,
-    pub(super) has_sanitization: bool,
     pub(super) write_handler: bool,
     pub(super) sensitive_handler: bool,
     pub(super) public_risk_endpoint: bool,
@@ -267,7 +266,6 @@ impl FileAnalysisSignals {
         let dangerous_html = !pattern_registry
             && has_any_unquoted(content, &DANGEROUS_HTML_PATTERNS)
             && !is_json_ld_serialization_sink(content);
-        let has_sanitization = has_any(content, &SANITIZATION_PATTERNS);
         let ssrf_like = has_any(content, &SSRF_PATTERNS);
         let has_ssrf_guard = has_any(content, &SSRF_GUARD_PATTERNS);
         let write_handler_raw = is_write_handler(&lower);
@@ -459,7 +457,6 @@ impl FileAnalysisSignals {
             has_transaction,
             has_unsafe_raw_sql,
             dangerous_html,
-            has_sanitization,
             write_handler,
             sensitive_handler,
             public_risk_endpoint,

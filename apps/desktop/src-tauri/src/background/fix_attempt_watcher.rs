@@ -132,6 +132,10 @@ fn emit_changed(app: &AppHandle) {
     emit_event(app, "fix-attempt-updated", ());
 }
 
+fn should_mark_group_verified(attempt: &FixAttemptRow) -> bool {
+    attempt.target_kind == "group"
+}
+
 /// Long-running loop: tick every `FIX_ATTEMPT_POLL_INTERVAL`. Spawned from
 /// `lib.rs` under `supervised_loop_async` so a panicking tick restarts with
 /// backoff.
@@ -257,19 +261,21 @@ async fn settle_attempt(db: &Arc<Database>, app: &AppHandle, attempt: &FixAttemp
                 tracing::warn!("fix attempt watcher: verify attempt {}: {e}", attempt.id);
                 return;
             }
-            if let Err(e) = db.set_issue_group_state(
-                attempt.project_id,
-                &attempt.env_url,
-                &attempt.check_id,
-                IssueLifecycle::Verified {
-                    by: VerifiedBy::LocalScan,
-                },
-                now,
-            ) {
-                tracing::warn!(
-                    "fix attempt watcher: set issue state for attempt {}: {e}",
-                    attempt.id
-                );
+            if should_mark_group_verified(attempt) {
+                if let Err(e) = db.set_issue_group_state(
+                    attempt.project_id,
+                    &attempt.env_url,
+                    &attempt.check_id,
+                    IssueLifecycle::Verified {
+                        by: VerifiedBy::LocalScan,
+                    },
+                    now,
+                ) {
+                    tracing::warn!(
+                        "fix attempt watcher: set issue state for attempt {}: {e}",
+                        attempt.id
+                    );
+                }
             }
             emit_site_score_changed(app, attempt.project_id);
             emit_changed(app);
@@ -317,14 +323,7 @@ fn evaluate_attempt(
     attempt: &FixAttemptRow,
     now: i64,
 ) -> Result<Option<Outcome>, String> {
-    let issue_still_active = db.is_fix_attempt_target_active(
-        attempt.project_id,
-        &attempt.env_url,
-        &attempt.check_id,
-        &attempt.target_kind,
-        attempt.target_relative_path.as_deref(),
-        attempt.target_line,
-    )?;
+    let issue_still_active = db.is_fix_attempt_active(attempt)?;
     if !issue_still_active {
         // An inactive issue is verified regardless of sources, so skip even
         // the targeted source lookup below.

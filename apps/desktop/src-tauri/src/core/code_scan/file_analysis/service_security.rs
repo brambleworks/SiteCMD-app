@@ -31,7 +31,6 @@ pub(super) fn collect_service_security_issues(
     let has_transaction = ctx.signals.has_transaction;
     let has_unsafe_raw_sql = ctx.signals.has_unsafe_raw_sql;
     let dangerous_html = ctx.signals.dangerous_html;
-    let has_sanitization = ctx.signals.has_sanitization;
     let write_handler = ctx.signals.write_handler;
     let sensitive_handler = ctx.signals.sensitive_handler;
     let uses_stripe_checkout = ctx.signals.uses_stripe_checkout;
@@ -355,19 +354,24 @@ pub(super) fn collect_service_security_issues(
         ));
     }
 
-    if dangerous_html && !has_sanitization {
-        issues.push(build_issue(
-            "unsafe-html",
-            "security",
-            Severity::High,
-            "Raw HTML sink has no recognized local sanitization",
-            "The scanned file contains a raw-HTML rendering sink and SiteCMD did not recognize a local sanitizer. This does not establish XSS: the value may be trusted static content or sanitized by an imported boundary. If attacker-controlled HTML reaches the sink, active markup can execute or alter content in the application's origin unless an appropriate context-aware allowlist policy removes it.",
-            file,
-            first_match_line(content, &DANGEROUS_HTML_PATTERNS),
-            Some("A recognized raw-HTML sink was detected without a recognized local DOMPurify, sanitize-html, escaping, or equivalent sanitization pattern. The source and trust level of the rendered value were not resolved.".into()),
-            Some("Prefer structured rendering that treats content as text. If the feature intentionally accepts HTML, sanitize at the final rendering boundary with a maintained allowlist policy appropriate to the execution environment; constrain URLs and active elements, keep the sanitizer current, and consider Trusted Types/CSP as defense in depth.".into()),
-            Some("In a browser test against non-production fixtures, render an inert corpus covering script tags, event attributes, dangerous URL schemes, SVG/MathML, malformed markup, and mutation cases. Confirm active behavior is removed while explicitly allowed formatting remains; do not use a live exploit payload against production data.".into()),
-        ));
+    if dangerous_html {
+        for offset in unsafe_html_sink_offsets(content) {
+            let line = line_number(content, offset);
+            let mut issue = build_issue(
+                "unsafe-html",
+                "security",
+                Severity::High,
+                "Raw HTML sink has no recognized local sanitization",
+                "The reported raw-HTML rendering sink has no recognized local sanitizer. This does not establish XSS: the value may be trusted static content or sanitized by an imported boundary. If attacker-controlled HTML reaches this sink, active markup can execute or alter content in the application's origin unless an appropriate context-aware allowlist policy removes it.",
+                file,
+                Some(line),
+                Some("This raw-HTML sink has no recognized DOMPurify, sanitize-html, escaping, or equivalent sanitization in its value expression. The source and trust level of the rendered value were not resolved.".into()),
+                Some("Prefer structured rendering that treats content as text. If the feature intentionally accepts HTML, sanitize at the final rendering boundary with a maintained allowlist policy appropriate to the execution environment; constrain URLs and active elements, keep the sanitizer current, and consider Trusted Types/CSP as defense in depth.".into()),
+                Some("In a browser test against non-production fixtures, render an inert corpus covering script tags, event attributes, dangerous URL schemes, SVG/MathML, malformed markup, and mutation cases. Confirm active behavior is removed while explicitly allowed formatting remains; do not use a live exploit payload against production data.".into()),
+            );
+            issue.id = format!("unsafe-html:{}:{}", file.relative_path, line);
+            issues.push(issue);
+        }
     }
 
     // A route with no recognized auth gate is caller-facing whether or not its

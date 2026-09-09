@@ -87,7 +87,7 @@ fn different_occurrence_targets_remain_independently_active() {
 }
 
 #[test]
-fn shifted_line_replaces_the_active_attempt_for_the_same_file() {
+fn different_lines_in_the_same_file_remain_independently_active() {
     let db = temp_db();
     let project_id = db
         .upsert_project("Fix Loop", "/tmp/fix-loop", Some("astro"))
@@ -101,7 +101,7 @@ fn shifted_line_replaces_the_active_attempt_for_the_same_file() {
             FixAttemptTarget::occurrence("src/a.ts".into(), Some(10)),
             1_000,
         )
-        .expect("first line snapshot");
+        .expect("first occurrence");
     let second = db
         .create_fix_attempt_with_target(
             project_id,
@@ -111,7 +111,7 @@ fn shifted_line_replaces_the_active_attempt_for_the_same_file() {
             FixAttemptTarget::occurrence("src/a.ts".into(), Some(18)),
             2_000,
         )
-        .expect("shifted line snapshot");
+        .expect("second occurrence");
 
     assert_ne!(first, second);
     assert_eq!(
@@ -119,14 +119,36 @@ fn shifted_line_replaces_the_active_attempt_for_the_same_file() {
             .expect("first query")
             .expect("first row")
             .status,
-        "canceled"
+        "briefed"
     );
     assert_eq!(
         db.list_fix_attempts_in_status(&["briefed"])
             .expect("active attempts")
             .len(),
-        1
+        2
     );
+
+    let first_latest = db
+        .get_latest_fix_attempt_for_target(
+            project_id,
+            "https://example.com",
+            "code_scan.hardcoded-secret",
+            FixAttemptTarget::occurrence("src/a.ts".into(), Some(10)),
+        )
+        .expect("first target lookup")
+        .expect("first target row");
+    let second_latest = db
+        .get_latest_fix_attempt_for_target(
+            project_id,
+            "https://example.com",
+            "code_scan.hardcoded-secret",
+            FixAttemptTarget::occurrence("src/a.ts".into(), Some(18)),
+        )
+        .expect("second target lookup")
+        .expect("second target row");
+
+    assert_eq!(first_latest.id, first);
+    assert_eq!(second_latest.id, second);
 }
 
 #[test]
@@ -505,7 +527,7 @@ fn occurrence_activity_scopes_attempts_to_their_structured_file_target() {
         .expect("own-file query"));
 
     assert!(
-        db.is_fix_attempt_target_active(
+        !db.is_fix_attempt_target_active(
             project_id,
             "https://example.com",
             "code_scan.external-call-retry",
@@ -514,7 +536,121 @@ fn occurrence_activity_scopes_attempts_to_their_structured_file_target() {
             Some(99),
         )
         .expect("shifted-line query"),
-        "the line snapshot may move without changing the occurrence target"
+        "another line in the same file is a separate occurrence"
+    );
+}
+
+#[test]
+#[cfg(feature = "desktop")]
+fn occurrence_activity_survives_line_only_movement() {
+    let db = temp_db();
+    let project_id = db
+        .upsert_project("Fix Loop", "/tmp/fix-loop", Some("astro"))
+        .expect("upsert");
+    insert_test_work_item_at(
+        &db,
+        project_id,
+        "https://example.com",
+        "code_scan.unsafe-html",
+        Some("src/view.tsx"),
+        Some(20),
+    )
+    .expect("insert occurrence");
+    let id = db
+        .create_fix_attempt_with_target(
+            project_id,
+            "https://example.com",
+            "code_scan.unsafe-html",
+            "codex",
+            FixAttemptTarget::occurrence("src/view.tsx".into(), Some(20)),
+            1_000,
+        )
+        .expect("create attempt");
+    let attempt = db
+        .get_fix_attempt(id)
+        .expect("query attempt")
+        .expect("attempt row");
+    assert_eq!(attempt.target_occurrence_count, Some(1));
+
+    db.execute(move |conn| {
+        conn.execute(
+            "UPDATE work_items SET line = 99 WHERE project_id = ?1",
+            rusqlite::params![project_id],
+        )
+        .map_err(|error| error.to_string())
+    })
+    .expect("database worker")
+    .expect("move line");
+
+    assert!(
+        db.is_fix_attempt_active(&attempt)
+            .expect("line-shifted activity"),
+        "moving an unchanged finding must not verify the attempt"
+    );
+}
+
+#[test]
+#[cfg(feature = "desktop")]
+fn clearing_one_occurrence_does_not_wait_for_its_sibling() {
+    let db = temp_db();
+    let project_id = db
+        .upsert_project("Fix Loop", "/tmp/fix-loop", Some("astro"))
+        .expect("upsert");
+    insert_test_work_item_at(
+        &db,
+        project_id,
+        "https://example.com",
+        "code_scan.unsafe-html",
+        Some("src/view.tsx"),
+        Some(20),
+    )
+    .expect("insert first occurrence");
+    db.execute(move |conn| {
+        conn.execute(
+            "INSERT INTO work_items
+                (project_id, env_url, source, signal_id, check_id, category, severity,
+                 title, description, first_seen_at, last_seen_at, resolved_at,
+                 relative_path, line)
+             VALUES (?1, 'https://example.com', 'code_scan', 'second-unsafe-html',
+                     'code_scan.unsafe-html', 'security', 'high', 'unsafe html',
+                     'unsafe html', 1000, 1000, NULL, 'src/view.tsx', 40)",
+            rusqlite::params![project_id],
+        )
+        .map_err(|error| error.to_string())
+    })
+    .expect("database worker")
+    .expect("insert second occurrence");
+    let id = db
+        .create_fix_attempt_with_target(
+            project_id,
+            "https://example.com",
+            "code_scan.unsafe-html",
+            "codex",
+            FixAttemptTarget::occurrence("src/view.tsx".into(), Some(20)),
+            1_000,
+        )
+        .expect("create attempt");
+    let attempt = db
+        .get_fix_attempt(id)
+        .expect("query attempt")
+        .expect("attempt row");
+    assert_eq!(attempt.target_occurrence_count, Some(2));
+
+    db.execute(move |conn| {
+        conn.execute(
+            "UPDATE work_items SET resolved_at = 2000
+             WHERE project_id = ?1 AND line = 20",
+            rusqlite::params![project_id],
+        )
+        .map_err(|error| error.to_string())
+    })
+    .expect("database worker")
+    .expect("resolve target");
+
+    assert!(
+        !db.is_fix_attempt_active(&attempt)
+            .expect("remaining activity"),
+        "a separate occurrence must not keep the repaired target active"
     );
 }
 

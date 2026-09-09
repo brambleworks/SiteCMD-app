@@ -89,6 +89,7 @@ export function CodeScanResults({
         currentResult.projectId,
         normalizeAppUrlForKey(currentResult.environmentUrl ?? ""),
         selectedIssue.checkId,
+        { path: selectedIssue.relativePath, line: selectedIssue.line },
       )
     : null;
   const selectionHandoff = useSyncExternalStore(subscribeFixHandoff, () =>

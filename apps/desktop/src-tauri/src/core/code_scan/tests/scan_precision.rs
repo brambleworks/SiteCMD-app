@@ -158,6 +158,139 @@ fn an_interpolated_raw_html_value_still_reports() {
 }
 
 #[test]
+fn a_computed_inner_html_assignment_reports_but_static_text_does_not() {
+    let unsafe_project = TempDir::new().unwrap();
+    write_file(
+        unsafe_project.path(),
+        "package.json",
+        r#"{ "name": "search-suggest" }"#,
+    );
+    write_file(
+        unsafe_project.path(),
+        "src/search-suggest.ts",
+        r#"export function showSuggestion(el: HTMLElement, words: string[]) {
+  el.innerHTML = words.join("").replace(/\s/g, "&nbsp;");
+}
+"#,
+    );
+
+    let report = audit_project(unsafe_project.path()).unwrap();
+    assert_present(&report, "unsafe-html");
+
+    let static_project = TempDir::new().unwrap();
+    write_file(
+        static_project.path(),
+        "package.json",
+        r#"{ "name": "static-placeholder" }"#,
+    );
+    write_file(
+        static_project.path(),
+        "src/placeholder.ts",
+        r#"export function clearSuggestion(el: HTMLElement) {
+  el.innerHTML = "";
+}
+"#,
+    );
+
+    let report = audit_project(static_project.path()).unwrap();
+    assert_absent(&report, "unsafe-html");
+}
+
+#[test]
+fn each_unsafe_html_sink_is_reported_at_its_own_line() {
+    let temp = TempDir::new().unwrap();
+    write_file(
+        temp.path(),
+        "package.json",
+        r#"{ "name": "multiple-html-sinks" }"#,
+    );
+    write_file(
+        temp.path(),
+        "src/previews.tsx",
+        r#"export function Previews({ first, second }) {
+  const firstPreview = <div dangerouslySetInnerHTML={{ __html: first }} />;
+  const secondPreview = <div dangerouslySetInnerHTML={{ __html: second }} />;
+  return <>{firstPreview}{secondPreview}</>;
+}
+"#,
+    );
+
+    let report = audit_project(temp.path()).unwrap();
+    let findings = report
+        .issues
+        .iter()
+        .filter(|issue| issue.id.starts_with("unsafe-html:"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(findings.len(), 2);
+    assert_eq!(
+        findings.iter().map(|issue| issue.line).collect::<Vec<_>>(),
+        [Some(2), Some(3)]
+    );
+    assert_ne!(findings[0].id, findings[1].id);
+}
+
+#[test]
+fn a_sanitizer_only_clears_the_sink_that_uses_it() {
+    let temp = TempDir::new().unwrap();
+    write_file(
+        temp.path(),
+        "package.json",
+        r#"{ "name": "mixed-html-sinks" }"#,
+    );
+    write_file(
+        temp.path(),
+        "src/previews.tsx",
+        r#"export function Previews({ trusted, untrusted }) {
+  const safe = <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(trusted) }} />;
+  const unsafe = <div dangerouslySetInnerHTML={{ __html: untrusted }} />;
+  return <>{safe}{unsafe}</>;
+}
+"#,
+    );
+
+    let report = audit_project(temp.path()).unwrap();
+    let findings = report
+        .issues
+        .iter()
+        .filter(|issue| issue.id.starts_with("unsafe-html:"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].line, Some(3));
+}
+
+#[test]
+fn a_later_unrelated_sanitizer_does_not_clear_an_unsafe_sink() {
+    let temp = TempDir::new().unwrap();
+    write_file(
+        temp.path(),
+        "package.json",
+        r#"{ "name": "separate-html-values" }"#,
+    );
+    write_file(
+        temp.path(),
+        "src/preview.tsx",
+        r#"export function Preview({ untrusted, trusted }) {
+  const preview = <div dangerouslySetInnerHTML={{ __html: untrusted }} />;
+  const safeCopy = DOMPurify.sanitize(trusted);
+  return <>{preview}{safeCopy}</>;
+}
+"#,
+    );
+
+    let report = audit_project(temp.path()).unwrap();
+    let findings = report
+        .issues
+        .iter()
+        .filter(|issue| issue.id.starts_with("unsafe-html:"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].line, Some(2));
+}
+
+#[test]
 fn a_credential_derived_fetch_url_is_not_request_controlled() {
     let temp = TempDir::new().unwrap();
     write_file(temp.path(), "package.json", r#"{ "name": "fetch-app" }"#);

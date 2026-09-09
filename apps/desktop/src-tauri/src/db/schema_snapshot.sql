@@ -193,7 +193,7 @@ CREATE TABLE fix_attempts (
     updated_at INTEGER NOT NULL,
     brief_fetched_at INTEGER
 , target_kind TEXT NOT NULL DEFAULT 'group'
-    CHECK(target_kind IN ('group', 'occurrence')), target_relative_path TEXT, target_line INTEGER, producer_rule TEXT);
+    CHECK(target_kind IN ('group', 'occurrence')), target_relative_path TEXT, target_line INTEGER, producer_rule TEXT, target_occurrence_count INTEGER);
 
 CREATE TABLE historical_enrichments (
     work_item_id INTEGER NOT NULL,
@@ -703,7 +703,7 @@ CREATE INDEX idx_fix_attempts_status ON fix_attempts(status);
 CREATE UNIQUE INDEX uq_fix_attempts_active
     ON fix_attempts(
         project_id, env_url, check_id, target_kind,
-        COALESCE(target_relative_path, '')
+        COALESCE(target_relative_path, ''), COALESCE(target_line, -1)
     )
     WHERE status IN ('briefed', 'verify_requested', 'verifying');
 
