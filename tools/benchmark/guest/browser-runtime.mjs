@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readFileSync, realpathSync } from "node:fs";
 import { digest } from "../lib/workflow-plan.mjs";
 
 export function captureBrowserRuntime() {
@@ -36,10 +36,21 @@ export function captureBrowserRuntime() {
   ];
   const files = paths.map((file) => {
     const resolved = realpathSync(file);
-    const stat = statSync(resolved);
-    if (!stat.isFile() || stat.uid !== 0 || stat.mode & 0o022)
-      throw new Error("Browser binaries must remain controller-owned and read-only to other users");
-    return { path: file, resolved, sha256: digest(readFileSync(resolved)) };
+    // One descriptor carries both the ownership check and the read, so the
+    // bytes hashed are the bytes checked. Checking a path and then reading it
+    // describes two different moments, and the identity is only worth as much
+    // as the guarantee that they saw the same file.
+    const handle = openSync(resolved, "r");
+    try {
+      const stat = fstatSync(handle);
+      if (!stat.isFile() || stat.uid !== 0 || stat.mode & 0o022)
+        throw new Error(
+          "Browser binaries must remain controller-owned and read-only to other users",
+        );
+      return { path: file, resolved, sha256: digest(readFileSync(handle)) };
+    } finally {
+      closeSync(handle);
+    }
   });
   const identity = { schemaVersion: 1, engine: "WebKitGTK", version: "2.52.6", inventory, files };
   return { ...identity, sha256: digest(identity) };

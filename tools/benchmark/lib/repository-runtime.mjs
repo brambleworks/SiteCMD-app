@@ -1,4 +1,14 @@
-import { lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+} from "node:fs";
 import path from "node:path";
 import { digest } from "./workflow-plan.mjs";
 
@@ -34,9 +44,25 @@ export function runtimeTreeDigest(directory, { requireRoot = false } = {}) {
       entries.push({ name, mode, directory: true });
       for (const child of readdirSync(target).sort()) visit(`${name}/${child}`);
     } else if (stat.isFile() && stat.nlink === 1) {
-      bytes += stat.size;
-      if (bytes > 1024 * 1024 * 1024) throw new Error("Runtime exceeds its size bound");
-      entries.push({ name, mode, sha256: digest(readFileSync(target)) });
+      // One descriptor carries both the check and the read, so the bytes
+      // hashed are the bytes checked. O_NOFOLLOW refuses a path swapped to a
+      // symlink after the lstat above, and the inode comparison catches a
+      // swap to any other file.
+      const handle = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+      try {
+        const opened = fstatSync(handle);
+        if (!opened.isFile() || opened.nlink !== 1 || opened.ino !== stat.ino)
+          throw new Error(`Runtime entry changed while it was read: ${name}`);
+        if (requireRoot && (opened.uid !== 0 || opened.mode & 0o022))
+          throw new Error(
+            `Runtime entry is not controller-owned and read-only to other users: ${name}`,
+          );
+        bytes += opened.size;
+        if (bytes > 1024 * 1024 * 1024) throw new Error("Runtime exceeds its size bound");
+        entries.push({ name, mode: opened.mode & 0o7777, sha256: digest(readFileSync(handle)) });
+      } finally {
+        closeSync(handle);
+      }
     } else {
       throw new Error(`Unsupported runtime entry: ${name}`);
     }
