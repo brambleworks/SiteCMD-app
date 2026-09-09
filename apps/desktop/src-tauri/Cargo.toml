@@ -170,6 +170,13 @@ criterion = { version = "0.8", features = ["html_reports"] }
 name = "correlation_resolver"
 harness = false
 
+# Incremental compilation is off because this workspace compiles mostly in
+# batch runs (test suites, the verify-push gate, agent lanes) where it saves
+# little. Every distinct compile state leaves a session directory that cargo
+# never reclaims, which reached 269 directories and 47 GB in five days.
+[profile.dev]
+incremental = false
+
 [profile.profiling]
 inherits = "release"
 debug = true
