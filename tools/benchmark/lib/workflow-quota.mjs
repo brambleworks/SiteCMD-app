@@ -95,11 +95,11 @@ function weeklyConsumption(before, current, label, blockers) {
     }
     return current.usedPercent - before.usedPercent;
   }
+  const active = epochs.find((epoch) => epoch.resetsAt === current.resetsAt);
   requireCondition(
     epochs[0].resetsAt === before.resetsAt &&
       epochs[0].startUsedPercent === before.usedPercent &&
-      epochs.at(-1).resetsAt === current.resetsAt &&
-      epochs.at(-1).peakUsedPercent >= current.usedPercent,
+      active?.peakUsedPercent >= current.usedPercent,
     `${label}: quota accounting epochs do not match the frozen baseline and current reading`,
   );
   for (const epoch of epochs.slice(1))
@@ -210,20 +210,12 @@ export function verifyQuotaUsageContinuity(baseline, previous, current) {
           ),
         `${label}: accounting history changed`,
       );
-      const appended = window.accountingEpochs.length > prior.accountingEpochs.length;
-      const stableCount = prior.accountingEpochs.length - (appended ? 0 : 1);
-      requireCondition(
-        JSON.stringify(window.accountingEpochs.slice(0, stableCount)) ===
-          JSON.stringify(prior.accountingEpochs.slice(0, stableCount)),
-        `${label}: accounting history changed`,
-      );
-      if (!appended) {
-        const oldActive = prior.accountingEpochs.at(-1);
-        const active = window.accountingEpochs.at(-1);
+      for (const [index, oldEpoch] of prior.accountingEpochs.entries()) {
+        const epoch = window.accountingEpochs[index];
         requireCondition(
-          active.resetsAt === oldActive.resetsAt &&
-            active.startUsedPercent === oldActive.startUsedPercent &&
-            active.peakUsedPercent >= oldActive.peakUsedPercent,
+          epoch.resetsAt === oldEpoch.resetsAt &&
+            epoch.startUsedPercent === oldEpoch.startUsedPercent &&
+            epoch.peakUsedPercent >= oldEpoch.peakUsedPercent,
           `${label}: accounting history changed`,
         );
       }
@@ -272,14 +264,9 @@ export function carryForwardQuotaUsage(baseline, previous, current) {
           },
         ];
       }
-      const active = epochs.at(-1);
-      if (active.resetsAt === window.resetsAt)
-        active.peakUsedPercent = Math.max(active.peakUsedPercent, window.usedPercent);
+      const active = epochs.find((epoch) => epoch.resetsAt === window.resetsAt);
+      if (active) active.peakUsedPercent = Math.max(active.peakUsedPercent, window.usedPercent);
       else {
-        requireCondition(
-          !epochs.some((epoch) => epoch.resetsAt === window.resetsAt),
-          `${account.provider}/${window.id}: quota epoch reset repeated`,
-        );
         epochs.push({
           resetsAt: window.resetsAt,
           startUsedPercent: 0,

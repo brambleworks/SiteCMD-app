@@ -415,6 +415,17 @@ test("quota carry-forward appends rolling epochs and never lowers their peaks", 
   assert.equal(conservative.accounts[0].windows[0].accountingEpochs[1].peakUsedPercent, 3);
   assert.equal(verifyQuotaUsageContinuity(baseline, advanced, conservative), conservative);
 
+  const revisited = snapshot("2026-09-03T16:03:00Z");
+  revisited.accounts[0].windows[0].usedPercent = 12;
+  const oscillating = carryForwardQuotaUsage(baseline, conservative, revisited);
+  assert.equal(oscillating.accounts[0].windows[0].accountingEpochs.length, 2);
+  assert.equal(oscillating.accounts[0].windows[0].accountingEpochs[0].peakUsedPercent, 12);
+  assert.equal(
+    evaluateQuota(baseline, oscillating, pilotPolicy.billing, Date.parse(revisited.capturedAt))
+      .quotaAllowed,
+    true,
+  );
+
   const tampered = structuredClone(conservative);
   tampered.accounts[0].windows[0].accountingEpochs[0].peakUsedPercent = 11;
   assert.throws(() => verifyQuotaUsageContinuity(baseline, advanced, tampered), /history changed/);
