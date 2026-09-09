@@ -46,8 +46,11 @@ export function runtimeTreeDigest(directory, { requireRoot = false } = {}) {
     } else if (stat.isFile() && stat.nlink === 1) {
       // One descriptor carries both the check and the read, so the bytes
       // hashed are the bytes checked. O_NOFOLLOW refuses a path swapped to a
-      // symlink after the lstat above, and the inode comparison catches a
-      // swap to any other file.
+      // symlink after the lstat above, and the inode comparison below refuses
+      // a swap to any other file, so the open cannot inherit a different
+      // inode than the walk decided to descend into. That comparison is what
+      // closes the race, and it is not something the query can see.
+      // codeql-allow: js/file-system-race
       const handle = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW);
       try {
         const opened = fstatSync(handle);
