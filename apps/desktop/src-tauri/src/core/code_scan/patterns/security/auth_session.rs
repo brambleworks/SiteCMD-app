@@ -8,15 +8,15 @@ pub(in crate::core::code_scan) static CORS_WILDCARD_PATTERNS: LazyLock<Vec<regex
             regex::Regex::new(
                 r#"(?im)^\s*allow_origins\s*=\s*\[\s*["']\*["']\s*\]"#,
             )
-                .unwrap(),
+            .expect("static allow_origins wildcard list regex"), // allow-expect: compile-time literal regex
             regex::Regex::new(
                 r#"(?im)^\s*allow_origins\s*=\s*[a-z_][^\n]{0,160}\bdefault\s*=\s*\[\s*["']\*["']\s*\]"#,
             )
-            .unwrap(),
+            .expect("static allow_origins wildcard default regex"), // allow-expect: compile-time literal regex
             regex::Regex::new(
                 r#"(?is)\bdef\s+[a-z0-9_]*cors[a-z0-9_]*\s*\([^)]*\)\s*:.{0,600}?\breturn\s*\[\s*["']\*["']\s*\]"#,
             )
-            .unwrap(),
+            .expect("static cors helper wildcard return regex"), // allow-expect: compile-time literal regex
         ]
     });
 
@@ -25,11 +25,12 @@ pub(in crate::core::code_scan) static CORS_CREDENTIAL_PATTERNS: LazyLock<Vec<reg
         vec![
             regex::Regex::new(r#"(?i)access-control-allow-credentials[^\n]*true"#).unwrap(),
             regex::Regex::new(r#"(?i)credentials\s*:\s*true"#).unwrap(),
-            regex::Regex::new(r#"(?im)^\s*allow_credentials\s*=\s*true\b"#).unwrap(),
+            regex::Regex::new(r#"(?im)^\s*allow_credentials\s*=\s*true\b"#)
+                .expect("static allow_credentials literal regex"), // allow-expect: compile-time literal regex
             regex::Regex::new(
                 r#"(?im)^\s*allow_credentials\s*=\s*[a-z_][^\n]{0,160}\bdefault\s*=\s*true\b"#,
             )
-            .unwrap(),
+            .expect("static allow_credentials default regex"), // allow-expect: compile-time literal regex
         ]
     });
 
@@ -40,7 +41,8 @@ pub(in crate::core::code_scan) static CORS_RUNTIME_PATTERNS: LazyLock<Vec<regex:
         regex::Regex::new(r#"(?i)\ballow_origin\s*\("#).unwrap(),
         regex::Regex::new(r#"(?i)\ballow_credentials\s*\("#).unwrap(),
         regex::Regex::new(r#"(?i)\bcors\s*\("#).unwrap(),
-        regex::Regex::new(r#"(?i)\bcorsmiddleware\b"#).unwrap(),
+        regex::Regex::new(r#"(?i)\bcorsmiddleware\b"#)
+            .expect("static CORSMiddleware marker regex"), // allow-expect: compile-time literal regex
         regex::Regex::new(r#"(?i)headers\s*:\s*\{"#).unwrap(),
     ]
     });
