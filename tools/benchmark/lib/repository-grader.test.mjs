@@ -80,3 +80,78 @@ test("repository grading requires both Linkding response and browser protection"
     assert.equal(result.browserRuntimeSha256.length, 64);
   }
 });
+
+function whoogleObservation(input, safe) {
+  assert.equal(input.operation, "config-paths");
+  const response = (status, body = "", location = null) => ({ status, body, location });
+  return {
+    security: {
+      traversalWrite: { response: response(safe ? 400 : 302), outsideExists: !safe },
+      absoluteWrite: { response: response(safe ? 400 : 302), outsideExists: !safe },
+      traversalRead: response(safe ? 400 : 200, safe ? "" : input.readMarker),
+      absoluteRead: response(safe ? 400 : 200, safe ? "" : input.readMarker),
+      invalidNames: [response(safe ? 400 : 500), response(safe ? 400 : 302)],
+    },
+    ordinary: {
+      unnamedSave: response(302, "", "/ordinary"),
+      unnamedGet: response(200, JSON.stringify({ url: "/ordinary", theme: "dark" })),
+      namedSave: { response: response(302), insideExists: true },
+      namedLoad: response(200, JSON.stringify({ url: "/named", theme: "light" })),
+      disabled: response(403),
+      afterRejected: response(200, JSON.stringify({ url: "/named", theme: "light" })),
+    },
+  };
+}
+
+test("repository grading recognizes Whoogle path confinement without weakening normal config use", () => {
+  const runtime = { fixture: "Python identity" };
+  for (const safe of [false, true]) {
+    const result = gradeRepository(
+      { id: "whoogle-named-config-path", repositoryRuntime: runtime },
+      "/not-executed",
+      (item, _candidate, input) => {
+        assert.deepEqual(item.repositoryRuntime, runtime);
+        return whoogleObservation(input, safe);
+      },
+    );
+    assert.equal(result.acceptancePass, safe);
+    assert.equal(result.regressionsPass, true);
+    assert.equal(result.runtimeSha256.length, 64);
+  }
+});
+
+test("repository grading dispatches Flask-Reuploaded controls through their frozen runtime", () => {
+  const saved = (result, inside = [result]) => ({
+    result,
+    error: null,
+    inside,
+    outside: [],
+  });
+  const blocked = { result: null, error: "UploadNotAllowed", inside: [], outside: [] };
+  const runtime = { fixture: "Flask-Reuploaded runtime" };
+  const result = gradeRepository(
+    {
+      id: "flask-reuploaded-default-name-control",
+      repository: "flask-reuploaded",
+      repositoryRuntime: runtime,
+    },
+    "/not-executed",
+    (item) => {
+      assert.deepEqual(item.repositoryRuntime, runtime);
+      return {
+        publicTests: { exitCode: 0, tests: 48, log: "48 passed" },
+        blockedPhp: blocked,
+        blockedMixedScript: blocked,
+        allowedImage: saved("photo.jpg"),
+        defaultName: saved("PHOTO.jpg"),
+        lowerCustom: saved("photo.jpg"),
+        placeholder: saved("photo.jpg"),
+        collision: saved("photo_1.jpg", ["photo.jpg", "photo_1.jpg"]),
+        explicitFolder: saved("users/photo.jpg"),
+      };
+    },
+  );
+  assert.equal(result.acceptancePass, true);
+  assert.equal(result.regressionsPass, true);
+  assert.equal(result.runtimeSha256.length, 64);
+});

@@ -2,19 +2,20 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { digest } from "./lib/workflow-plan.mjs";
 import { evaluateQuota } from "./lib/workflow-quota.mjs";
-import { validatePilotStudy } from "./lib/workflow-pilot.mjs";
+import { validateRunnableStudy } from "./lib/workflow-runnable-study.mjs";
 import { loadPlan, loadResults } from "./lib/workflow-store.mjs";
 import { exportGuestTrial } from "./lib/vm-trial-export.mjs";
 import { deployHarness } from "./lib/vm-harness.mjs";
 import { guestCommand, guestProcess } from "./lib/vm-guest.mjs";
 import { verifyContinuation } from "./lib/workflow-continuation.mjs";
 import { loadTrialSource } from "./lib/trial-source.mjs";
+import { buildTrialItem } from "./lib/trial-item.mjs";
 
 const supplied = process.argv[2];
 if (!supplied) throw new Error("Usage: run-next.mjs RUN_DIRECTORY");
 const run = path.resolve(supplied);
 const plan = loadPlan(run);
-validatePilotStudy(plan.study);
+validateRunnableStudy(plan.study);
 verifyContinuation(run, plan);
 const recorded = new Set(loadResults(run, plan).map((record) => record.trialId));
 const assignment = plan.assignments.find((item) => !recorded.has(item.id));
@@ -48,6 +49,12 @@ const report = readFileSync(path.join(run, "inputs", `${assignment.task}-report.
 const task = plan.study.tasks.find((task) => task.id === assignment.task);
 loadTrialSource(item.baselineFiles, task);
 if (digest(report) !== task.reportSha256) throw new Error("Frozen input changed");
+for (const [field, input] of [
+  ["runtimeSha256", "repositoryRuntime"],
+  ["browserRuntimeSha256", "browserRuntime"],
+])
+  if (task[field] !== undefined && digest(item[input]) !== task[field])
+    throw new Error("Frozen repository runtime changed");
 console.log(
   `Running ${assignment.task}, ${assignment.configuration}, ${assignment.arm}. Update quota-current.json from real readings before it becomes five minutes old.`,
 );
@@ -63,13 +70,7 @@ const child = guestProcess(
   JSON.stringify({
     plan,
     assignment,
-    item: {
-      id: item.id,
-      entry: item.entry,
-      runtime: item.runtime,
-      rule: item.rule,
-      kind: item.kind,
-    },
+    item: buildTrialItem(item, task),
     files: item.baselineFiles,
     product,
     report,

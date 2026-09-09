@@ -10,6 +10,7 @@ import { deriveRepositoryReference } from "../lib/repository-reference.mjs";
 import { digest } from "../lib/workflow-plan.mjs";
 import { gradeRepository } from "./repository-grader.mjs";
 import { verifyLinkdingRuntime } from "./linkding-runtime.mjs";
+import { verifyWhoogleRuntime } from "./whoogle-runtime.mjs";
 import { captureBrowserRuntime } from "./browser-runtime.mjs";
 import { createWorkspace, mountDesktopWorkspace, closeWorkspace } from "./trial-workspace.mjs";
 
@@ -17,23 +18,34 @@ if (process.platform !== "linux" || process.getuid() !== 0)
   throw new Error("Repository qualification requires the isolated guest controller");
 const { id, definition, sources, product, runtime } = JSON.parse(readFileSync(0, "utf8"));
 const linkding = definition.id === "linkding-asset-sandbox";
-if (!/^[a-f0-9]{32}$/.test(id) || (!linkding && definition.id !== "tornado-static-redirect"))
+const whoogle = definition.id === "whoogle-named-config-path";
+const runtimeCase = linkding || whoogle;
+if (!/^[a-f0-9]{32}$/.test(id) || (!runtimeCase && definition.id !== "tornado-static-redirect"))
   throw new Error("Unsupported repository qualification");
 const pinnedDefinition = JSON.parse(
   readFileSync(
-    new URL(`../cases/${linkding ? "linkding" : "repository"}-calibration.json`, import.meta.url),
+    new URL(
+      `../cases/${whoogle ? "whoogle" : linkding ? "linkding" : "repository"}-calibration.json`,
+      import.meta.url,
+    ),
   ),
 );
 if (digest(definition) !== digest(pinnedDefinition))
   throw new Error("Repository definition differs from the frozen harness");
-if (linkding) {
-  verifyLinkdingRuntime(runtime);
+if (runtimeCase) {
+  if (linkding) verifyLinkdingRuntime(runtime);
+  else verifyWhoogleRuntime(runtime);
   if (
     sources.upstream.commit !== definition.upstream.commit ||
     sources.upstream.sha256 !== definition.upstream.sha256 ||
     digest(sources.reference) !==
       digest(
-        deriveRepositoryReference(sources.baseline, sources.upstream, definition.editableFiles),
+        deriveRepositoryReference(
+          sources.baseline,
+          sources.upstream,
+          definition.editableFiles,
+          definition.reference.regions,
+        ),
       )
   )
     throw new Error("Derived reference differs from its pinned provenance");
@@ -59,7 +71,7 @@ for (const variant of ["baseline", "reference"]) {
   )
     throw new Error("Repository source differs from the pinned case");
   const candidate = path.join(output, variant);
-  if (!linkding || variant === "baseline") validateRepositorySnapshot(snapshot);
+  if (!runtimeCase || variant === "baseline") validateRepositorySnapshot(snapshot);
   materializeRepositoryFiles(snapshot.files, candidate);
   const grades = Array.from({ length: 3 }, () =>
     gradeRepository({ id: definition.id, repositoryRuntime: runtime, browserRuntime }, candidate),

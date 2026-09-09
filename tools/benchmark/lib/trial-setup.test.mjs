@@ -85,3 +85,117 @@ test("a missing repair handoff preserves the product response and never returns 
   assert.equal(calls[1].args.check_id, "code_scan.open-redirect");
   assert.equal(closed, true);
 });
+
+test("a confirmatory repair prepares the exact desktop issue occurrence", async () => {
+  const calls = [];
+  const invokes = [];
+  let closed = false;
+  const target = {
+    checkId: "code_scan.unsafe-html",
+    relativePath: "src/render.tsx",
+    fingerprint: `sha256:${"a".repeat(64)}`,
+  };
+  const issue = {
+    ...target,
+    title: "Raw HTML sink has no recognized local sanitization",
+    severity: "high",
+    description: "Untrusted markup reaches a raw HTML sink.",
+    whyNow: "Active content can execute in the application origin.",
+    likelyFix: "Use a safe rendering boundary.",
+    sourceExcerpt: "return <div dangerouslySetInnerHTML={{ __html: value }} />;",
+    line: 41,
+  };
+  const desktop = {
+    database: "/isolated.db",
+    async invoke(command, args) {
+      invokes.push({ command, args });
+      if (command === "add_project") return 9;
+      if (command === "create_fix_attempt")
+        return {
+          id: 17,
+          kickoffPrompt: "SiteCMD prepared fix attempt #17. Read the brief.",
+        };
+      throw new Error(`Unexpected command ${command}`);
+    },
+  };
+  const mcp = {
+    request: async () => ({}),
+    notify() {},
+    close() {
+      closed = true;
+    },
+    async call(name, args) {
+      calls.push({ name, args });
+      if (name === "run_scan")
+        return { content: [{ text: "Code scan complete: execution #1 (complete)" }] };
+      if (name === "get_issue")
+        return { content: [{ text: `Flagged location: ${target.relativePath}:41` }] };
+      if (name === "get_fix_brief")
+        return { content: [{ text: `Where to look\n${target.relativePath}:41` }] };
+      throw new Error(`Unexpected tool ${name}`);
+    },
+  };
+
+  const prepared = await prepareProject(
+    desktop,
+    { path: "/source" },
+    {
+      id: "confirmatory-repair",
+      kind: "repair",
+      confirmatory: true,
+      targetFinding: target,
+      targetIssue: issue,
+    },
+    { mcp: "/mcp.mjs" },
+    { agent: "codex" },
+    "mcp",
+    () => {},
+    { connect: () => mcp },
+  );
+
+  assert.equal(prepared.projectId, 9);
+  assert.equal(prepared.attemptId, 17);
+  assert.equal(prepared.handoff, "SiteCMD prepared fix attempt #17. Read the brief.");
+  assert.match(prepared.brief, /src\/render\.tsx:41/);
+  assert.deepEqual(
+    calls.map(({ name }) => name),
+    ["run_scan", "get_issue", "get_fix_brief"],
+  );
+  assert.deepEqual(calls[1].args, {
+    url: "http://localhost:4173",
+    check_id: target.checkId,
+  });
+  assert.deepEqual(calls[2].args, { attempt_id: 17 });
+  assert.deepEqual(invokes[1], {
+    command: "create_fix_attempt",
+    args: {
+      args: {
+        projectId: 9,
+        envUrl: "http://localhost:4173",
+        checkId: target.checkId,
+        agentTool: "codex",
+        title: issue.title,
+        severity: "high",
+        description: issue.description,
+        whyItMatters: issue.whyNow,
+        evidence: {
+          fingerprint: target.fingerprint,
+          sourceExcerpt: issue.sourceExcerpt,
+        },
+        manualFix: issue.likelyFix,
+        url: "http://localhost:4173",
+        detectedStack: null,
+        codeLocations: [
+          {
+            label: "Flagged location",
+            path: target.relativePath,
+            line: 41,
+            reason: "This is the exact location the scanner flagged.",
+          },
+        ],
+        previousFailure: null,
+      },
+    },
+  });
+  assert.equal(closed, true);
+});

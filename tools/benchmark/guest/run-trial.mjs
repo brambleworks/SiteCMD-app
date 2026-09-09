@@ -7,6 +7,7 @@ import { evaluateQuota } from "../lib/workflow-quota.mjs";
 import { writeNewJson } from "../lib/workflow-store.mjs";
 import { loadTrialSource } from "../lib/trial-source.mjs";
 import { trialPrompt } from "../lib/trial-prompt.mjs";
+import { buildTrialItem } from "../lib/trial-item.mjs";
 import { agentVersions, trialInvocation } from "../lib/trial-invocation.mjs";
 import { createTrialBridge } from "./trial-bridge.mjs";
 import { startDesktop, systemCommand } from "./desktop-session.mjs";
@@ -24,6 +25,8 @@ import { prepareProject, trialUrl } from "./trial-setup.mjs";
 import { canRequestVerification, readFix, observeVerification } from "./product-observation.mjs";
 import { candidateRecord, readCandidate } from "./trial-snapshot.mjs";
 import { closingQuota } from "./closing-quota.mjs";
+import { verifyWhoogleRuntime } from "./whoogle-runtime.mjs";
+import { prepareRepositoryAgentRuntime } from "./repository-agent-runtime.mjs";
 
 if (process.platform !== "linux" || process.getuid() !== 0)
   throw new Error("Guest controller required");
@@ -33,10 +36,11 @@ const plan = validatePlan(input.plan);
 if (!plan.assignments.some((entry) => digest(entry) === digest(assignment)))
   throw new Error("Unknown assignment");
 const task = plan.study.tasks.find((task) => task.id === assignment.task);
+buildTrialItem(item, task);
 const { files, modes } = loadTrialSource(source, task);
-if (item.id !== task.id) throw new Error("Case source differs from the frozen study");
-for (const key of ["id", "kind", "runtime", "entry", "rule"])
-  if (item[key] !== task[key]) throw new Error(`Case ${key} differs from the frozen study`);
+if (item.entry !== task.entry || item.rule !== task.rule)
+  throw new Error("Case entry or rule differs from the frozen study");
+if (item.id === "whoogle-named-config-path") verifyWhoogleRuntime(item.repositoryRuntime);
 if (digest(product) !== plan.study.productSha256)
   throw new Error("Product receipt differs from the frozen study");
 const configuration = plan.study.configurations.find(
@@ -117,6 +121,10 @@ try {
     assignment.arm === "mcp"
       ? openMcp(product.mcp, desktop.database, (event) => evidence.log("mcp.jsonl", event))
       : null;
+  const owner = {
+    uid: Number(systemCommand("id", ["-u", "runner"])),
+    gid: Number(systemCommand("id", ["-g", "runner"])),
+  };
   bridge = await createTrialBridge({
     channel,
     arm: assignment.arm,
@@ -124,10 +132,7 @@ try {
     canVerify: (attemptId) =>
       canRequestVerification(desktop.database, attemptId, prepared.projectId),
     onError: (error) => agent?.stop(error.message),
-    owner: {
-      uid: Number(systemCommand("id", ["-u", "runner"])),
-      gid: Number(systemCommand("id", ["-g", "runner"])),
-    },
+    owner,
     submit: async (summary, kind, attemptId) => {
       if (!agent || typeof summary !== "string" || !summary.trim() || summary.length > 2000)
         throw new Error("A concise submission summary is required");
@@ -184,6 +189,7 @@ try {
       };
     },
   });
+  prepareRepositoryAgentRuntime({ item, workspace, channel, owner });
   const invocation = trialInvocation({
     agent: configuration.agent,
     model: configuration.model,
@@ -191,6 +197,7 @@ try {
     workspace,
     channel,
     proxy: `${publicTools}/mcp-proxy.mjs`,
+    repositoryRuntime: item.repositoryRuntime,
   });
   writeNewJson(`${directory}/configuration.json`, { configuration, invocation, accounts });
   const prompt = trialPrompt({
@@ -203,6 +210,7 @@ try {
     url: trialUrl,
     handoff: prepared.handoff,
     report: input.report,
+    repositoryRuntime: Boolean(item.repositoryRuntime),
   });
   writeFileSync(`${directory}/prompt.txt`, prompt, { flag: "wx", mode: 0o600 });
   assertNotCancelled();

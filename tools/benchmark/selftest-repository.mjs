@@ -15,31 +15,38 @@ import { exportGuestTrial } from "./lib/vm-trial-export.mjs";
 const args = process.argv.slice(2);
 const linkding = args[0] === "--linkding";
 if (linkding) args.shift();
+const whoogle = args[0] === "--whoogle";
+if (whoogle) args.shift();
+const runtimeCase = linkding || whoogle;
 const [repository, runtimeFile, ...extra] = args;
-if (!repository || extra.length || (linkding ? !runtimeFile : runtimeFile))
+if (!repository || extra.length || (runtimeCase ? !runtimeFile : runtimeFile))
   throw new Error(
-    "Usage: pnpm benchmark:repository:selftest [--linkding] SOURCE_GIT [LINKDING_RUNTIME_RECEIPT]",
+    "Usage: pnpm benchmark:repository:selftest [--linkding|--whoogle] SOURCE_GIT [RUNTIME_RECEIPT]",
   );
 const definition = JSON.parse(
   readFileSync(
-    new URL(`./cases/${linkding ? "linkding" : "repository"}-calibration.json`, import.meta.url),
+    new URL(
+      `./cases/${whoogle ? "whoogle" : linkding ? "linkding" : "repository"}-calibration.json`,
+      import.meta.url,
+    ),
   ),
 );
 const sources = {};
-for (const variant of ["baseline", linkding ? "upstream" : "reference"]) {
+for (const variant of ["baseline", runtimeCase ? "upstream" : "reference"]) {
   sources[variant] = exportPinnedTree(path.resolve(repository), definition[variant].commit);
   assert.equal(sources[variant].sha256, definition[variant].sha256, `Pinned ${variant} digest`);
 }
-if (linkding) {
+if (runtimeCase) {
   sources.reference = deriveRepositoryReference(
     sources.baseline,
     sources.upstream,
     definition.editableFiles,
+    definition.reference.regions,
   );
   assert.equal(sources.reference.sha256, definition.reference.sha256, "Derived reference digest");
 }
 const harness = deployHarness();
-const repositoryRuntime = linkding ? JSON.parse(readFileSync(runtimeFile)) : undefined;
+const repositoryRuntime = runtimeCase ? JSON.parse(readFileSync(runtimeFile)) : undefined;
 const browserRuntime = linkding
   ? JSON.parse(
       guestCommand(
@@ -61,7 +68,7 @@ const browserRuntime = linkding
 const study = fixtureStudy();
 study.id = `repository-fixture-${randomBytes(8).toString("hex")}`;
 study.billing = pilotPolicy.billing;
-study.limits = { ...pilotPolicy.limits, trialSeconds: linkding ? 420 : 90 };
+study.limits = { ...pilotPolicy.limits, trialSeconds: linkding ? 420 : whoogle ? 180 : 90 };
 study.configurations = [
   {
     id: "scripted",
@@ -76,7 +83,7 @@ study.tasks = [
   {
     ...study.tasks[0],
     id: definition.id,
-    repository: linkding ? "linkding" : "tornado",
+    repository: whoogle ? "whoogle-search" : linkding ? "linkding" : "tornado",
     prompt: definition.task,
     requirements: definition.task,
     provenance: `${definition.repository}; historical public repair, scripted runner test only`,
@@ -85,10 +92,10 @@ study.tasks = [
     sourceSha256: sources.baseline.sha256,
     referenceSha256: sources.reference.sha256,
     graderSha256: harness.id,
-    ...(linkding
+    ...(runtimeCase
       ? {
           runtimeSha256: digest(repositoryRuntime),
-          browserRuntimeSha256: digest(browserRuntime),
+          ...(browserRuntime ? { browserRuntimeSha256: digest(browserRuntime) } : {}),
         }
       : {}),
     validatedBy: "Fixture assertions inside the isolated guest; not a measured agent result",
@@ -105,7 +112,8 @@ const item = {
   id: definition.id,
   runtime: "python",
   entry: definition.editableFiles[0],
-  ...(linkding ? { repositoryRuntime, browserRuntime } : {}),
+  ...(runtimeCase ? { repositoryRuntime } : {}),
+  ...(browserRuntime ? { browserRuntime } : {}),
 };
 const reference = Object.fromEntries(
   sources.reference.files
@@ -138,7 +146,7 @@ const result = JSON.parse(
         protectedFile: definition.licenseFile,
       }),
       capture: true,
-      timeout: linkding ? 480000 : 150000,
+      timeout: linkding ? 480000 : whoogle ? 240000 : 150000,
     },
   ),
 );

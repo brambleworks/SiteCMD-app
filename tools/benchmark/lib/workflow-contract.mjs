@@ -217,10 +217,21 @@ export function validateTrial(record, assignment, study) {
         "model identity verification is required",
       );
     }
+    if (selection.assurance !== undefined)
+      requireCondition(
+        selection.assurance === "provider-response-metadata" ||
+          (selection.assurance === "explicit-cli-selection" && config.agent === "codex"),
+        "invalid model selection assurance",
+      );
     requireCondition(
       record.model === (selection.observed.length === 1 ? selection.observed[0] : null),
       "model must equal the single provider-observed identity or remain unknown",
     );
+    if (selection.verified && selection.observed.length === 0)
+      requireCondition(
+        selection.assurance === "explicit-cli-selection" && config.agent === "codex",
+        "unobserved model verification requires strict Codex CLI selection evidence",
+      );
     requireCondition(
       !selection.observed.some((model) => model !== config.model) || record.status !== "completed",
       "a provider model mismatch must remain a failed trial",

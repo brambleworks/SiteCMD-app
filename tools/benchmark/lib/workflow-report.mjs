@@ -2,6 +2,7 @@ import { validatePlan } from "./workflow-plan.mjs";
 import { validateResult, summarizeArm } from "./workflow-results.mjs";
 import { pairedComparison } from "./workflow-statistics.mjs";
 import { accountedSpend } from "./workflow-usage.mjs";
+import { invalidatedStudy } from "./workflow-study-validity.mjs";
 
 const COMPARISONS = [
   ["normal", "report"],
@@ -22,55 +23,82 @@ export function analyzeStudy(plan, results, { bootstrapSamples = 2000 } = {}) {
     records.set(record.trialId, record);
   }
   const groups = [];
-  for (const configuration of plan.study.configurations) {
-    for (const surface of ["code", "web"]) {
+  const addGroup = (configuration, surface, kind, tasks, assignments, pooled = false) => {
+    const arms = Object.fromEntries(
+      plan.study.arms.map((arm) => [
+        arm,
+        summarizeArm(
+          assignments.filter((item) => item.arm === arm),
+          records,
+          plan.study.limits,
+        ),
+      ]),
+    );
+    const comparisons =
+      kind === "repair"
+        ? COMPARISONS.map(([baselineArm, treatmentArm]) =>
+            pairedComparison({
+              tasks,
+              assignments,
+              records,
+              limits: plan.study.limits,
+              baselineArm,
+              treatmentArm,
+              seed: plan.study.seed,
+              samples: bootstrapSamples,
+            }),
+          )
+        : [];
+    groups.push({
+      configuration,
+      pooled,
+      surface,
+      kind,
+      tasks: tasks.length,
+      repositories: new Set(tasks.map((task) => task.repository)).size,
+      arms,
+      comparisons,
+    });
+  };
+  for (const configuration of plan.study.configurations)
+    for (const surface of ["code", "web"])
       for (const kind of ["repair", "negative_control"]) {
         const tasks = plan.study.tasks.filter(
           (task) => task.surface === surface && task.kind === kind,
         );
         if (tasks.length === 0) continue;
         const ids = new Set(tasks.map((task) => task.id));
-        const assignments = plan.assignments.filter(
-          (item) => item.configuration === configuration.id && ids.has(item.task),
-        );
-        const arms = Object.fromEntries(
-          plan.study.arms.map((arm) => [
-            arm,
-            summarizeArm(
-              assignments.filter((item) => item.arm === arm),
-              records,
-              plan.study.limits,
-            ),
-          ]),
-        );
-        const comparisons =
-          kind === "repair"
-            ? COMPARISONS.map(([baselineArm, treatmentArm]) =>
-                pairedComparison({
-                  tasks,
-                  assignments,
-                  records,
-                  limits: plan.study.limits,
-                  baselineArm,
-                  treatmentArm,
-                  seed: plan.study.seed,
-                  samples: bootstrapSamples,
-                }),
-              )
-            : [];
-        groups.push({
-          configuration: configuration.id,
+        addGroup(
+          configuration.id,
           surface,
           kind,
-          tasks: tasks.length,
-          repositories: new Set(tasks.map((task) => task.repository)).size,
-          arms,
-          comparisons,
-        });
+          tasks,
+          plan.assignments.filter(
+            (item) => item.configuration === configuration.id && ids.has(item.task),
+          ),
+        );
       }
-    }
-  }
+  if (plan.study.analysis?.configurationAggregation === "equal-weight-fixed-requested-set")
+    for (const surface of ["code", "web"])
+      for (const kind of ["repair", "negative_control"]) {
+        const tasks = plan.study.tasks.filter(
+          (task) => task.surface === surface && task.kind === kind,
+        );
+        if (tasks.length === 0) continue;
+        const ids = new Set(tasks.map((task) => task.id));
+        addGroup(
+          "pooled-fixed-configurations",
+          surface,
+          kind,
+          tasks,
+          plan.assignments.filter((item) => ids.has(item.task)),
+          true,
+        );
+      }
   const blockers = [];
+  const invalidated = invalidatedStudy(plan.study.id);
+  if (invalidated)
+    blockers.push(`Study invalidated; evidence is diagnostic only: ${invalidated.reason}`);
   const retainedAssigned = plan.study.continuation?.retained.length ?? 0;
   if (retainedAssigned)
     blockers.push(
@@ -81,17 +109,30 @@ export function analyzeStudy(plan, results, { bootstrapSamples = 2000 } = {}) {
   if (records.size !== plan.assignments.length)
     blockers.push(`${plan.assignments.length - records.size} trials have not been recorded`);
   if (
-    results.some(
-      (record) =>
-        record.agentInvoked !== false &&
-        (!record.modelSelection?.receipt ||
-          record.modelSelection.verified !== true ||
-          record.modelSelection.observed.length !== 1 ||
-          record.model !== record.modelSelection.requested),
-    )
+    results.some((record) => {
+      if (record.agentInvoked === false) return false;
+      const selection = record.modelSelection;
+      const assignment = plan.assignments.find((item) => item.id === record.trialId);
+      const configuration = plan.study.configurations.find(
+        (item) => item.id === assignment.configuration,
+      );
+      const providerObserved =
+        selection !== undefined &&
+        [undefined, "provider-response-metadata"].includes(selection?.assurance) &&
+        selection.observed.length === 1 &&
+        record.model === selection.requested;
+      const explicitCodex =
+        configuration.agent === "codex" &&
+        selection?.assurance === "explicit-cli-selection" &&
+        selection.observed.length === 0 &&
+        record.model === null;
+      return (
+        !selection?.receipt || selection.verified !== true || (!providerObserved && !explicitCodex)
+      );
+    })
   )
     blockers.push(
-      "Provider-observed model identity is missing or differs from the requested model",
+      "Model selection evidence is missing, incomplete, or differs from the requested configuration",
     );
   for (const group of groups) {
     const setupModes = new Set(Object.values(group.arms).flatMap((summary) => summary.setupModes));
@@ -180,6 +221,11 @@ export function renderWorkflowReport(plan, analysis) {
     );
   for (const blocker of analysis.blockers) lines.push(`- ${blocker}`);
   for (const group of analysis.groups) {
+    if (group.pooled)
+      lines.push(
+        "",
+        "This section is the preregistered equal-weight average across the fixed requested configurations. Per-configuration results remain separate above.",
+      );
     lines.push(
       "",
       `## ${group.configuration}: ${group.surface} ${group.kind}`,
@@ -194,10 +240,15 @@ export function renderWorkflowReport(plan, analysis) {
         `| ${arm} | ${summary.recorded}/${summary.assigned} | ${summary.firstAccepted} | ${summary.accepted} | ${percent(summary.firstAttemptRate)} | ${number(summary.tokensPerAccepted)} | ${number(summary.costPerAccepted, 4)} | ${summary.regressions} | ${summary.pendingReview} |`,
       );
     }
-    lines.push(
-      "",
-      "Rates remain unavailable until every assigned trial is recorded and reviews are settled.",
-    );
+    if (
+      Object.values(group.arms).some(
+        (summary) => summary.recorded !== summary.assigned || summary.pendingReview > 0,
+      )
+    )
+      lines.push(
+        "",
+        "Rates remain unavailable until every assigned trial is recorded and reviews are settled.",
+      );
     if (group.kind === "negative_control")
       lines.push("Accepted negative controls are correct triage decisions, not repaired defects.");
     for (const comparison of group.comparisons) {
@@ -256,7 +307,9 @@ export function renderWorkflowReport(plan, analysis) {
     "- Efficiency includes spending on failed attempts. Zero accepted fixes produce n/a, not an infinite savings claim.",
     "- Token categories are disjoint and include cached input and delegated agents. Missing evidence is not zero usage.",
     "- Confidence intervals resample repositories, then tasks, preserving paired workflows and repeated trials.",
-    "- Cost estimates are not bills. Model configurations and code/web results are never pooled.",
+    plan.study.analysis?.configurationAggregation === "equal-weight-fixed-requested-set"
+      ? "- Cost estimates are not bills. The pooled result is the preregistered equal-weight average across the fixed requested configurations; per-configuration results remain visible. Code and web results are never pooled."
+      : "- Cost estimates are not bills. Model configurations and code/web results are never pooled.",
     "- Human time is reported only when measured; automated run time is not a developer-productivity result.",
     "- Patch receipts and blinded review support acceptance. Scanner clearance alone is not correctness.",
     "- These checks validate recorded evidence, not trial isolation or an operator's honesty. Audit raw traces and execution conditions before publishing.",

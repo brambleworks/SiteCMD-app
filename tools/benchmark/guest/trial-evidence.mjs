@@ -24,16 +24,13 @@ export function createEvidence(directory, plan, assignment, item, source, worksp
   const task = plan.study.tasks.find((task) => task.id === item.id);
   const { files, modes, editableFiles } = loadTrialSource(source, task);
   const grader = task.sourceFormat ? "gradeRepository" : "gradeCase";
-  const runtimes =
-    item.id === "linkding-asset-sandbox"
-      ? [
-          ["runtimeSha256", "repositoryRuntime", "repository-runtime.json"],
-          ["browserRuntimeSha256", "browserRuntime", "browser-runtime.json"],
-        ]
-      : [];
+  const runtimes = [
+    ["runtimeSha256", "repositoryRuntime", "repository-runtime.json"],
+    ["browserRuntimeSha256", "browserRuntime", "browser-runtime.json"],
+  ].filter(([field, input]) => task[field] !== undefined || item[input] !== undefined);
   for (const [field, input] of runtimes)
     if (!item[input] || task[field] !== digest(item[input]))
-      throw new Error("Linkding runtime differs from its registration");
+      throw new Error("Repository runtime differs from its registration");
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   if (task.sourceFormat) writeNewJson(path.join(directory, "source.json"), source);
   for (const [, input, file] of runtimes) writeNewJson(path.join(directory, file), item[input]);
@@ -195,12 +192,20 @@ export function createEvidence(directory, plan, assignment, item, source, worksp
     } else if (configuration.agent === "claude" && providerCompleted && evidenceComplete) {
       const results = events.filter((event) => event.type === "result");
       if (results.length === 1)
-        usage = claudeUsage(results[0], { noSubagents: true, billingMode: "subscription" });
+        usage = claudeUsage(results[0], {
+          noSubagents: true,
+          billingMode: "subscription",
+          incrementalCostUsd: 0,
+        });
     } else {
       const turns = events.filter((event) => event.type === "turn.completed");
       if (turns.length && providerCompleted && evidenceComplete) {
         const rows = turns.map((event) =>
-          codexUsage(event, { noSubagents: true, billingMode: "subscription" }),
+          codexUsage(event, {
+            noSubagents: true,
+            billingMode: "subscription",
+            incrementalCostUsd: 0,
+          }),
         );
         usage = { ...rows[0] };
         for (const key of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"])
@@ -256,6 +261,7 @@ export function createEvidence(directory, plan, assignment, item, source, worksp
               observed: observedModels,
               source: "explicit-cli-request",
               receipt: "model-identity.json",
+              assurance: identity.assurance,
               verified: identity.verified,
             },
           }

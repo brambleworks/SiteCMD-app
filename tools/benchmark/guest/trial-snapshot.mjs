@@ -21,6 +21,7 @@ export function readCandidate(directory) {
   const violations = [];
   let bytes = 0;
   let entries = 0;
+  let fileEntries = 0;
   const walk = (relative) => {
     const listing = readdirSync(path.join(directory, relative), { withFileTypes: true });
     for (const entry of listing.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
@@ -28,7 +29,7 @@ export function readCandidate(directory) {
       if (!relative && name === ".git") continue;
       const key = path.join(relative, name);
       const file = path.join(directory, key);
-      if (++entries > 1000) throw new Error("Candidate exceeds 1000 entries");
+      if (++entries > 5000) throw new Error("Candidate exceeds 5000 filesystem entries");
       if (entry.isSymbolicLink()) {
         violations.push(`Symlink ${key}: ${readlinkSync(file)}`);
         continue;
@@ -37,6 +38,7 @@ export function readCandidate(directory) {
         walk(key);
         continue;
       }
+      if (++fileEntries > 1000) throw new Error("Candidate exceeds 1000 files");
       // Read a no-follow descriptor so a swapped leaf cannot redirect capture.
       const handle = openSync(
         file,

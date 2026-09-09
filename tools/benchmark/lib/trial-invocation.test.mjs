@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { trialInvocation } from "./trial-invocation.mjs";
+import { trialConfigurations, trialInvocation } from "./trial-invocation.mjs";
 import { pilotPolicy } from "./workflow-pilot.mjs";
+import { repositoryStudyPolicy } from "./workflow-repository-study.mjs";
 
 const options = {
   workspace: "/srv/sitecmd-benchmark/workspaces/abc",
@@ -9,6 +10,12 @@ const options = {
   proxy: "/run/sitecmd-benchmark/proxy.mjs",
   arm: "normal",
 };
+const repositoryRuntime = {
+  id: "a".repeat(64),
+  installationId: "b".repeat(24),
+  manifest: { caseId: "whoogle-named-config-path" },
+};
+repositoryRuntime.directory = `/opt/sitecmd-benchmark/repository-runtimes/${repositoryRuntime.id}/${repositoryRuntime.installationId}`;
 
 test("every model and workflow disables incidental Python bytecode", () => {
   for (const selection of pilotPolicy.models) {
@@ -16,7 +23,51 @@ test("every model and workflow disables incidental Python bytecode", () => {
       const { args, env } = trialInvocation({ ...options, ...selection, arm });
       assert.equal(env.PYTHONDONTWRITEBYTECODE, "1");
       if (selection.agent === "codex")
-        assert.ok(args.includes('shell_environment_policy.set={PYTHONDONTWRITEBYTECODE="1"}'));
+        assert.ok(
+          args.some(
+            (value) =>
+              value.startsWith("shell_environment_policy.set=") &&
+              value.includes('PYTHONDONTWRITEBYTECODE="1"'),
+          ),
+        );
+    }
+  }
+});
+
+test("repository trials activate the frozen runtime and redirect Python caches", () => {
+  for (const selection of repositoryStudyPolicy.models) {
+    const { args, env } = trialInvocation({
+      ...options,
+      ...selection,
+      repositoryRuntime,
+    });
+    const virtualEnvironment = `${repositoryRuntime.directory}/environment/venv`;
+    assert.equal(env.VIRTUAL_ENV, virtualEnvironment);
+    assert.equal(env.PYTHONPYCACHEPREFIX, "/tmp/sitecmd-python-cache");
+    assert.equal(env.PYTEST_ADDOPTS, "-o cache_dir=/tmp/sitecmd-pytest-cache");
+    assert.equal(env.STATIC_FOLDER, `${options.channel}/runtime/static`);
+    assert.equal(env.CONFIG_VOLUME, `${options.channel}/runtime/config`);
+    assert.ok(env.PATH.startsWith(`${virtualEnvironment}/bin:`));
+    if (selection.agent === "codex") {
+      assert.ok(
+        args.some(
+          (value) =>
+            value.startsWith("permissions.benchmark=") &&
+            value.includes(`${JSON.stringify(repositoryRuntime.directory)}="read"`) &&
+            value.includes(`${JSON.stringify(`${options.channel}/runtime`)}="write"`),
+        ),
+      );
+      assert.ok(
+        args.some(
+          (value) =>
+            value.startsWith("shell_environment_policy.set=") &&
+            value.includes('PYTHONPYCACHEPREFIX="/tmp/sitecmd-python-cache"'),
+        ),
+      );
+    } else {
+      const { sandbox } = JSON.parse(args[args.indexOf("--settings") + 1]);
+      assert.ok(sandbox.filesystem.allowRead.includes(repositoryRuntime.directory));
+      assert.ok(sandbox.filesystem.allowWrite.includes(`${options.channel}/runtime`));
     }
   }
 });
@@ -85,6 +136,19 @@ test("each workflow selects its exact approved model and rejects Fable without f
     { agent: "claude" },
   ]) {
     assert.throws(() => trialInvocation({ ...options, ...selection }), /Unsupported/);
+  }
+});
+
+test("repository calibration invokes every frozen model including Daybreak", () => {
+  const configurations = trialConfigurations(
+    "isolated repository calibration",
+    repositoryStudyPolicy.models,
+  );
+  assert.equal(configurations.length, 4);
+  for (const { agent, model } of repositoryStudyPolicy.models) {
+    const { command, args } = trialInvocation({ ...options, agent, model });
+    assert.equal(command, agent);
+    assert.equal(args[args.indexOf("--model") + 1], model);
   }
 });
 

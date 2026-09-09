@@ -41,7 +41,10 @@ test("preflight checks versions and subscription status without launching a mode
   assert.deepEqual(
     result.accounts.map(({ agent, models }) => ({ agent, models })),
     [
-      { agent: "codex", models: ["gpt-5.6-sol", "gpt-6-astra"] },
+      {
+        agent: "codex",
+        models: ["gpt-5.6-sol", "gpt-6-astra", "gpt-daybreak-blue-latest"],
+      },
       { agent: "claude", models: ["claude-opus-5"] },
     ],
   );

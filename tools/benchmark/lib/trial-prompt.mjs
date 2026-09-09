@@ -8,6 +8,7 @@ export function trialPrompt({
   url,
   handoff,
   report,
+  repositoryRuntime = false,
 }) {
   if (!["normal", "report", "mcp"].includes(arm)) throw new Error("Unknown trial workflow");
   if (arm === "report" && (typeof report !== "string" || !report.trim()))
@@ -28,6 +29,11 @@ export function trialPrompt({
     ...(task.editableFiles
       ? [
           `Permitted edit paths: ${task.editableFiles.join(", ") || "none (no-op only)"}. Preserve every other tracked file and all executable modes.`,
+        ]
+      : []),
+    ...(repositoryRuntime
+      ? [
+          "The frozen project dependency environment is already active. Run tests with `python -m pytest`; do not install dependencies, run `./run test`, or override `STATIC_FOLDER` or `CONFIG_VOLUME`. Generated test data is redirected outside the checkout.",
         ]
       : []),
     `Work only in ${workspace}. Do not delegate, invoke another AI client, change tests or scanner suppressions, or access accounts and other workspaces. Use the existing tests and ordinary local tools.`,

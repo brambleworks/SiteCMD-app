@@ -37,6 +37,9 @@ export function summarizeModelIdentity(agent, requested, transcript, evidenceCom
   const unidentifiedResponseLines = [];
   const invalidLines = [];
   const completions = [];
+  let codexThreads = 0;
+  let codexTurnsStarted = 0;
+  let codexTurnsCompleted = 0;
   for (const [index, line] of transcript.split("\n").entries()) {
     if (!line.trim()) continue;
     let event;
@@ -48,6 +51,11 @@ export function summarizeModelIdentity(agent, requested, transcript, evidenceCom
       continue;
     }
     const claims = modelClaims(agent, event);
+    if (agent === "codex") {
+      if (event.type === "thread.started") codexThreads += 1;
+      if (event.type === "turn.started") codexTurnsStarted += 1;
+      if (event.type === "turn.completed") codexTurnsCompleted += 1;
+    }
     if (agent === "claude" && event.type === "result")
       completions.push(event.subtype === "success" && event.is_error === false);
     claims.configured.forEach((model) => configured.add(model));
@@ -55,7 +63,26 @@ export function summarizeModelIdentity(agent, requested, transcript, evidenceCom
     if (claims.unidentifiedResponse) unidentifiedResponseLines.push(index + 1);
   }
   const observed = [...new Set(observations.map(({ model }) => model))].sort();
-  const providerCompleted = completions.length === 1 && completions[0];
+  const codexCompleted = codexThreads === 1 && codexTurnsStarted === 1 && codexTurnsCompleted === 1;
+  const providerCompleted =
+    agent === "codex" ? codexCompleted : completions.length === 1 && completions[0];
+  const assurance = agent === "codex" ? "explicit-cli-selection" : "provider-response-metadata";
+  const configuredMatches = [...configured].every((model) => model === requested);
+  const verified =
+    agent === "codex"
+      ? evidenceComplete === true &&
+        providerCompleted &&
+        invalidLines.length === 0 &&
+        observed.length === 0 &&
+        configuredMatches
+      : evidenceComplete === true &&
+        providerCompleted &&
+        invalidLines.length === 0 &&
+        unidentifiedResponseLines.length === 0 &&
+        observations.some(({ source }) => source === "assistant.message.model") &&
+        observed.length === 1 &&
+        observed[0] === requested &&
+        configuredMatches;
   return {
     schemaVersion: 1,
     agent,
@@ -63,19 +90,12 @@ export function summarizeModelIdentity(agent, requested, transcript, evidenceCom
     transcriptSha256: digest(transcript),
     evidenceComplete: evidenceComplete === true,
     providerCompleted,
+    assurance,
     configured: [...configured].sort(),
     observed,
     observations,
     unidentifiedResponseLines,
     invalidLines,
-    verified:
-      evidenceComplete === true &&
-      providerCompleted &&
-      invalidLines.length === 0 &&
-      unidentifiedResponseLines.length === 0 &&
-      observations.some(({ source }) => source === "assistant.message.model") &&
-      observed.length === 1 &&
-      observed[0] === requested &&
-      [...configured].every((model) => model === requested),
+    verified,
   };
 }

@@ -73,6 +73,21 @@ test("Codex configuration echoes and foreign event formats stay unverified", () 
   assert.equal(result.verified, false);
 });
 
+test("a complete Codex stream verifies the strict CLI selection without inventing response metadata", () => {
+  const model = "gpt-daybreak-blue-latest";
+  const transcript = jsonl(
+    { type: "thread.started", thread_id: "thread-1" },
+    { type: "turn.started" },
+    { type: "item.completed", item: { type: "agent_message", text: "Done" } },
+    { type: "turn.completed", usage: { input_tokens: 10, output_tokens: 2 } },
+  );
+  const result = summarizeModelIdentity("codex", model, transcript, true);
+  assert.equal(result.providerCompleted, true);
+  assert.equal(result.assurance, "explicit-cli-selection");
+  assert.equal(result.verified, true);
+  assert.deepEqual(result.observed, []);
+});
+
 test("a missing response identity or a conflicting model blocks verification", () => {
   const terminal = {
     type: "result",

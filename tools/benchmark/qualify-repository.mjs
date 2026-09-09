@@ -12,38 +12,45 @@ const workflow = args[0] === "--workflow";
 if (workflow) args.shift();
 const linkding = args[0] === "--linkding";
 if (linkding) args.shift();
+const whoogle = args[0] === "--whoogle";
+if (whoogle) args.shift();
+const runtimeCase = linkding || whoogle;
 const [repository, destination, productFile, runtimeFile, ...extra] = args;
 if (
   !repository ||
   !destination ||
   !productFile ||
   extra.length ||
-  (linkding ? !runtimeFile : runtimeFile)
+  (runtimeCase ? !runtimeFile : runtimeFile)
 )
   throw new Error(
-    "Usage: node tools/benchmark/qualify-repository.mjs [--workflow] [--linkding] SOURCE_GIT NEW_OUTPUT_DIRECTORY PRODUCT_RECEIPT [LINKDING_RUNTIME_RECEIPT]",
+    "Usage: node tools/benchmark/qualify-repository.mjs [--workflow] [--linkding|--whoogle] SOURCE_GIT NEW_OUTPUT_DIRECTORY PRODUCT_RECEIPT [RUNTIME_RECEIPT]",
   );
 const output = path.resolve(destination);
 if (!output.startsWith(path.resolve(workRoot) + path.sep))
   throw new Error("Qualification evidence must stay in tools/benchmark/.work");
 const definition = JSON.parse(
   readFileSync(
-    new URL(`./cases/${linkding ? "linkding" : "repository"}-calibration.json`, import.meta.url),
+    new URL(
+      `./cases/${whoogle ? "whoogle" : linkding ? "linkding" : "repository"}-calibration.json`,
+      import.meta.url,
+    ),
   ),
 );
 const product = JSON.parse(readFileSync(productFile));
-const runtime = linkding ? JSON.parse(readFileSync(runtimeFile)) : undefined;
+const runtime = runtimeCase ? JSON.parse(readFileSync(runtimeFile)) : undefined;
 const sources = {};
-for (const variant of ["baseline", linkding ? "upstream" : "reference"]) {
+for (const variant of ["baseline", runtimeCase ? "upstream" : "reference"]) {
   sources[variant] = exportPinnedTree(path.resolve(repository), definition[variant].commit);
   if (sources[variant].sha256 !== definition[variant].sha256)
     throw new Error(`Pinned ${variant} source digest mismatch`);
 }
-if (linkding) {
+if (runtimeCase) {
   sources.reference = deriveRepositoryReference(
     sources.baseline,
     sources.upstream,
     definition.editableFiles,
+    definition.reference.regions,
   );
   if (sources.reference.sha256 !== definition.reference.sha256)
     throw new Error("Derived reference differs from the pinned case");

@@ -2,12 +2,14 @@
 
 Use the [evaluation protocol](../../docs/qa/agent-workflow-benchmark.md) to measure
 repair quality, compute efficiency, and developer effort. The paired workflow
-tooling freezes assignments, runs the subscription calibration in an isolated
+tooling freezes assignments, runs subscription evaluations in an isolated
 desktop, imports evidence, records blinded reviews, and reports uncertainty.
-This guide is for the operator preparing and executing that calibration. The
-subscription runner remains restricted to the five included cases. A separate
-scripted test exercises full-repository submissions without model calls; arbitrary
-repositories and Web Scan are not supported trial targets.
+This guide is for the operator preparing and executing those evaluations. The
+subscription runner supports the completed five-case pilot and the explicit
+Whoogle real-application calibration. The first eight-case repository study is
+retained for diagnostic analysis but is invalidated and cannot be run again. A
+separate scripted test exercises full-repository submissions without model calls.
+Arbitrary repositories and Web Scan are not supported trial targets.
 
 The [benchmark VM](vm/README.md) supplies a separate Linux environment for building
 the desktop and running trials. Host projects and accounts are not mounted.
@@ -104,8 +106,10 @@ can write, SiteCMD can read and traverse, and other users have no access. Its
 identity and permissions are checked before submissions. Changed permissions or
 replaced directories stop the trial; home and credential permissions are unchanged.
 
-All trial environments set `PYTHONDONTWRITEBYTECODE=1`; Codex also sets it in its
-shell-environment policy. Python fixtures use `python3 -B -m unittest discover -s app/api`.
+All trial environments set `PYTHONDONTWRITEBYTECODE=1` and redirect explicit
+bytecode compilation to the trial's temporary filesystem; Codex also receives
+both settings in its shell-environment policy. Python fixtures use
+`python3 -B -m unittest discover -s app/api`.
 The sandbox self-test checks that ordinary Python imports do not
 create bytecode. This prevents incidental cache files instead of hiding them:
 snapshots still retain all other untracked and binary additions. An intentional
@@ -213,19 +217,20 @@ The product's verification result is retained separately from independent gradin
 
 ### Model identity evidence
 
-New trials write `model-identity.json` with the transcript digest, response-field
-sources, line numbers, and completeness checks. Import recomputes this receipt
-from the preserved transcript. Startup selections remain configuration evidence,
-not proof that the requested model answered. Missing, conflicting or incomplete
-identity evidence blocks claim review; older records remain readable without
+New trials write `model-identity.json` with the transcript digest, assurance
+source, response-field locations when available, and completeness checks. Import
+recomputes this receipt from the preserved transcript. Missing, conflicting, or
+incomplete evidence blocks claim review; older records remain readable without
 being rewritten or silently upgraded.
 
-Claude response metadata and per-model usage are supported. The pinned Codex
-`exec --json` stream has no established response-model identity field, so its
-identity remains unknown. App Server's startup model is also configuration;
-switching transports does not by itself resolve this gap. A supported identity
-source must be validated before registering a confirmatory Codex study. These
-receipts check client-reported metadata, not cryptographic provider attestation.
+Claude Code supplies response-model metadata and per-model usage, which must
+match the requested model. The pinned Codex `exec --json` stream does not expose
+a response-model field. Codex trials therefore use a different, explicitly
+labeled assurance: the runner passes one exact model through strict CLI
+configuration and requires one clean lifecycle from `thread.started` through
+`turn.completed`, with no fallback. This establishes which configuration was
+requested and completed; it is not provider-response metadata or cryptographic
+attestation.
 
 ## Qualify a real repository
 
@@ -335,14 +340,50 @@ It is historical runner-development evidence, not a held-out case, an agent
 trial or a marketing claim. Existing qualification receipts remain unchanged;
 the browser checks produce a new qualification and harness identity.
 
+### Whoogle named configuration confinement
+
+The historical Whoogle case exercises a Flask application path-traversal repair
+that SiteCMD detects as `code_scan.python-path-traversal`. Prepare its pinned
+source, frozen runtime, qualification, and desktop workflow evidence as follows:
+
+```bash
+git init --bare tools/benchmark/.work/whoogle-source.git
+git -C tools/benchmark/.work/whoogle-source.git fetch --no-tags --depth=2 https://github.com/benbusby/whoogle-search.git 3a2e0b262e4a076a20416b45e6b6f23fd265aeda
+pnpm benchmark:repository:runtime --whoogle tools/benchmark/.work/whoogle-source.git tools/benchmark/.work/whoogle-runtime.json
+pnpm benchmark:repository:qualify --whoogle tools/benchmark/.work/whoogle-source.git tools/benchmark/.work/whoogle-qualification PRODUCT_RECEIPT tools/benchmark/.work/whoogle-runtime.json
+pnpm benchmark:repository:workflow --whoogle tools/benchmark/.work/whoogle-source.git tools/benchmark/.work/whoogle-workflow PRODUCT_RECEIPT tools/benchmark/.work/whoogle-runtime.json
+```
+
+Runtime setup pins Python 3.11.13 and uv 0.8.13 by archive checksum. It resolves
+the complete dependency set no later than the source commit, requires the frozen
+lock digest, installs wheels for every dependency except hash-locked Stem 1.8.1,
+and freezes a dedicated guest environment. Runtime creation executes no project
+code and makes no model calls.
+
+Qualification uses Whoogle's real Flask application, test client, session,
+configuration model, pickle serialization, and filesystem operations in an
+offline sandbox. Controlled benign dictionaries exercise traversal and absolute
+reads and writes. Unnamed configuration, valid named save/load behavior, redirects,
+sessions, and the configuration-disable policy must keep working. The reference
+copies only the upstream named-configuration route and required import; unrelated
+changes from the same commit remain excluded.
+
+The historical baseline must fail confinement while preserving ordinary behavior
+in all three repetitions. The narrow reference must pass both sets of checks in
+all three repetitions. SiteCMD must report the target on the baseline and clear it
+on the reference, and all three desktop workflow arms must reach a ready prompt.
+These are runner-development checks around a public historical defect, not
+held-out confirmation or marketing evidence.
+
 ### Full-repository submission integrity
 
-The Tornado and Linkding submission self-tests use an owned Node process in the
-VM, not an AI client:
+The Tornado, Linkding, and Whoogle submission self-tests use an owned Node process
+in the VM, not an AI client:
 
 ```bash
 pnpm benchmark:repository:selftest tools/benchmark/.work/tornado-source.git
 pnpm benchmark:repository:selftest --linkding tools/benchmark/.work/linkding-source.git tools/benchmark/.work/linkding-runtime.json
+pnpm benchmark:repository:selftest --whoogle tools/benchmark/.work/whoogle-source.git tools/benchmark/.work/whoogle-runtime.json
 ```
 
 Each test submits the full broken tree, applies only the pinned repair, and verifies that an edit to
@@ -358,11 +399,12 @@ that list, new files and executable-mode changes fail integrity. Candidate bytes
 and modes are saved per submission; import verifies their digests and rechecks
 the edit policy against the frozen source. These are controller consistency
 checks, not independent attestations. This path currently supports the included
-Tornado and Linkding graders and does not install arbitrary project dependencies.
-Linkding reuses its frozen Python runtime and captures the installed browser
+Tornado, Linkding, and Whoogle graders and does not install arbitrary project
+dependencies. Linkding reuses its frozen Python runtime and captures the installed browser
 identity before registering the scripted test. Both receipts are preserved and
 checked against the registration during evidence import. The grader identity
-covers the full frozen harness, including browser and sandbox helpers.
+covers the full frozen harness, including browser and sandbox helpers. Whoogle
+preserves and verifies its single frozen Python receipt during the same export.
 
 Each valid Linkding submission runs the same response, browser and 28 existing
 test checks used in qualification. The script receives only a submission receipt,
@@ -372,19 +414,20 @@ trial limits are unchanged. A passing self-test means its deliberately broken,
 repaired and invalid submissions were classified correctly, not that the final
 deliberately mutated candidate was accepted.
 
-A broader corpus, real-agent workflow validation and a new approved study are
-still needed. Neither qualification nor the scripted self-test authorizes
-additional subscription usage or changes the completed pilot.
+A broader corpus is still needed for general conclusions. The scripted self-tests
+do not authorize subscription use; only a separately frozen execution policy and
+study plan can do that.
 
 ### Check desktop workflow setup
 
 ```bash
 pnpm benchmark:repository:workflow SOURCE_GIT NEW_OUTPUT_DIRECTORY PRODUCT_RECEIPT
 pnpm benchmark:repository:workflow --linkding SOURCE_GIT NEW_OUTPUT_DIRECTORY PRODUCT_RECEIPT LINKDING_RUNTIME_RECEIPT
+pnpm benchmark:repository:workflow --whoogle SOURCE_GIT NEW_OUTPUT_DIRECTORY PRODUCT_RECEIPT WHOOGLE_RUNTIME_RECEIPT
 ```
 
-This uses the same pinned Tornado or Linkding source and installed product receipt as
-qualification. It starts a fresh desktop database and source workspace for each
+This uses the same pinned Tornado, Linkding, or Whoogle source and installed
+product receipt as qualification. It starts a fresh desktop database and source workspace for each
 of `normal`, `report` and `mcp`. It captures CLI reports, desktop scan results,
 MCP requests and responses, and the exact prompt that would reach a model. No
 model client starts, no repair is applied, and no trial is added to the pilot.
@@ -394,7 +437,8 @@ complete report. A rejected MCP repair handoff produces `product_error` and no
 prompt; it is never replaced by an unrelated finding. A case without a registered
 SiteCMD check produces `handoff_unmapped`, not a fabricated check ID or claimed
 MCP rejection. Its actual scan and issue responses are still captured. Linkding
-currently has no registered check for its asset sandbox defect.
+currently has no registered check for its asset sandbox defect. Whoogle must reach
+a real `start_fix` handoff for its registered path-traversal finding.
 
 File bytes and executable modes must remain unchanged after setup. The receipt distinguishes a successful
 mechanics check (`passed`) from an available product handoff (`handoffAvailable`);
@@ -406,6 +450,76 @@ before running scanners or agents. Upstream repairs that also change tests or
 unrelated features need an explicitly derived implementation-only reference,
 unchanged baseline tests and independent acceptance checks. Do not treat a whole
 release as one repair or silently strip files to fit runner limits.
+
+### Freeze the Whoogle subscription calibration
+
+After producing fresh Whoogle qualification and workflow directories with the
+same runner identity, freeze the dedicated agent plan:
+
+```bash
+pnpm benchmark:repository:prepare WHOOGLE_QUALIFICATION_DIRECTORY WHOOGLE_WORKFLOW_DIRECTORY tools/benchmark/.work/whoogle-repository-calibration
+```
+
+Preparation rechecks the pinned sources, narrow reference, frozen runtime,
+three-repetition grades, scanner target, desktop handoff, product receipt, and
+runner bytes. It then freezes 12 assignments: normal, report, and MCP once for
+Codex `gpt-5.6-sol`, Claude Code `claude-opus-5`, Codex `gpt-6-astra`, and Codex
+`gpt-daybreak-blue-latest`, all at high reasoning. Paid fallback and automatic
+resets remain disabled, and the study stops at the same subscription allowance
+limits as the original pilot.
+
+The frozen Python environment is active on the agent's path. Whoogle's mutable
+static and configuration storage is copied to a per-trial scratch directory so
+`python -m pytest` cannot add generated assets, keys, or cache files to the
+candidate tree. The prompt names that test command and prohibits `./run test`,
+which mutates the checkout before launching pytest.
+
+After a runner-only failure, create a continuation from fresh qualification and
+workflow receipts. Earlier outcomes and the original allowance remain immutable:
+
+```bash
+pnpm benchmark:repository:prepare NEW_QUALIFICATION NEW_WORKFLOW NEW_RUN_DIRECTORY --continue-from PRIOR_RUN_DIRECTORY --reason "Describe the runner correction"
+```
+
+Fill the new run's quota baseline/current files from fresh provider readings,
+then use `pnpm benchmark:run RUN_DIRECTORY` once per assignment. The first actual
+response establishes model availability; the runner never substitutes a fallback.
+This single historical task can expose executor or workflow failures and estimate
+case-specific behavior. It cannot support a general product or marketing claim.
+
+## Retired repository confirmation
+
+`sitecmd-repository-confirmatory-v1` completed 96 assignments across six repairs,
+two negative controls, three workflows, and four model configurations. A post-run
+validity review found three material protocol defects:
+
+- The Appium task and the registered scanner finding referred to different code.
+- Raw-HTML scanning and fix verification treated multiple sinks in one file as one
+  target, so an unrelated change could clear or verify the wrong occurrence.
+- The Outerbase chart grader did not directly assert required whitespace
+  preservation.
+
+The run is retained as diagnostic evidence only. Do not quote its success rates or
+token measurements as product evidence. `invalidated-studies.json` prevents its
+study ID from being executed again and forces every generated report to withhold
+claim readiness.
+
+The next confirmation must use a new study ID and cases that no repair agent has
+seen. Before freezing it:
+
+1. Register an exact scanner fingerprint, path, and semantic source anchor for
+   every task.
+2. Require the baseline finding's source excerpt to contain that anchor.
+3. Qualify each repeated finding as an independent occurrence through the desktop
+   handoff and verification loop.
+4. Assert every observable task requirement directly in the hidden grader.
+5. Rebuild source, scanner, behavioral, workflow, and product receipts from the
+   corrected implementation.
+
+The earlier `repository-held-out-v1.json` intake remains selection-attrition
+evidence: all 12 candidates passed source screening, but none produced its intended
+registered finding. Those cases and all eight executed v1 cases cannot be reused as
+held-out confirmation tasks.
 
 ## Check the pipeline locally
 
@@ -478,8 +592,10 @@ warm/cold setup, submissions, reviews, transcript path, and usage. Non-completed
 statuses require a failure explanation. MCP trials also need a server digest and
 complete trace artifact. Submission times must be ordered and within trial time.
 The VM runner records its explicit CLI model request separately from identities
-actually emitted by the provider. Missing observed identity stays `null`; it is
-not copied from configuration. Missing or mismatched identity blocks claim review.
+actually emitted by the provider. Claude requires matching response metadata.
+Codex requires the strict requested model and one complete, clean event lifecycle,
+because its pinned JSON stream has no response-model field. Missing, conflicting,
+or incomplete evidence blocks claim review.
 A setup failure before client launch has `agentInvoked: false`, no model, no
 submissions, and zero calls. Interrupted or truncated usage remains unknown.
 
@@ -563,7 +679,9 @@ for the same patch are rejected, and any rejection prevents acceptance. Do not
 show reviewers the assignment arm or agent transcript before their decision.
 
 Reports keep failures in the denominator, withhold complete rates when records or
-reviews are missing, and separate configurations, surfaces, and negative controls.
+reviews are missing, and separate surfaces and negative controls. Configurations
+remain separate unless the study preregisters a fixed weighted mixture; even then,
+the report retains every disaggregated configuration result.
 Efficiency includes failed-trial spending; zero accepted repairs yield `n/a`.
 Relative change and percentage-point change are separate. Confidence intervals
 resample repositories and tasks with paired arms and repeats intact. An unavailable

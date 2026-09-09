@@ -1,5 +1,18 @@
 import { spawnSync } from "node:child_process";
 import { pilotPolicy } from "./workflow-pilot.mjs";
+import { repositoryStudyPolicy } from "./workflow-repository-study.mjs";
+import { confirmatoryStudyPolicy } from "./workflow-confirmatory-study.mjs";
+
+const models = [
+  ...pilotPolicy.models,
+  ...repositoryStudyPolicy.models,
+  ...confirmatoryStudyPolicy.models,
+].filter(
+  (item, index, entries) =>
+    entries.findIndex(
+      (candidate) => candidate.agent === item.agent && candidate.model === item.model,
+    ) === index,
+);
 
 const BILLING_ENVIRONMENT =
   /^(ANTHROPIC_|OPENAI_|AZURE_OPENAI_|CODEX_API_|CLAUDE_CODE_USE_|CLAUDE_CODE_OAUTH_)/;
@@ -37,7 +50,7 @@ export function probeAgentAccounts({ environment = process.env, run = spawnSync 
       return { status: null };
     }
   };
-  const accounts = [...new Set(pilotPolicy.models.map(({ agent }) => agent))].map((agent) => {
+  const accounts = [...new Set(models.map(({ agent }) => agent))].map((agent) => {
     const versionResult = invoke(agent, ["--version"]);
     const status = invoke(
       agent,
@@ -58,7 +71,7 @@ export function probeAgentAccounts({ environment = process.env, run = spawnSync 
         : parseClaudeStatus(status);
     return {
       agent,
-      models: pilotPolicy.models.filter((item) => item.agent === agent).map(({ model }) => model),
+      models: models.filter((item) => item.agent === agent).map(({ model }) => model),
       version,
       subscriptionAuthenticated: subscription,
       modelAvailabilityVerified: false,

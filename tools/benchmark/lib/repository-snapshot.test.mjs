@@ -14,9 +14,11 @@ import path from "node:path";
 import { test } from "node:test";
 import {
   exportPinnedTree,
+  inspectPinnedTree,
   materializeRepositorySnapshot,
   validateRepositorySnapshot,
 } from "./repository-snapshot.mjs";
+import { digest } from "./workflow-plan.mjs";
 
 function repository(t) {
   const directory = mkdtempSync(path.join(os.tmpdir(), "sitecmd-source-test-"));
@@ -62,6 +64,25 @@ test("pinned trees preserve binary data, executable modes, hidden files and lice
   assert.equal(entries["test project.sh"].mode, "100755");
   assert.ok(entries[".github/config.yml"]);
   assert.equal(exportPinnedTree(directory, commit).sha256, snapshot.sha256);
+});
+
+test("source inspection reports compatibility and provenance without exporting bytes", (t) => {
+  const { directory, commit } = repository(t);
+  const inspection = inspectPinnedTree(directory, commit);
+  assert.equal(inspection.commit, commit);
+  assert.equal(inspection.files, 5);
+  assert.ok(inspection.bytes > 0);
+  assert.equal(inspection.sourceCompatible, true);
+  assert.deepEqual(inspection.licenseFiles, ["LICENSE"]);
+  assert.deepEqual(inspection.dependencyFiles, []);
+});
+
+test("source inspection recognizes a license with an SPDX family prefix", (t) => {
+  const { directory, git } = repository(t);
+  git("mv", "LICENSE", "AGPL-LICENSE.txt");
+  git("commit", "--quiet", "-m", "Use explicit license filename");
+  const inspection = inspectPinnedTree(directory, git("rev-parse", "HEAD"));
+  assert.deepEqual(inspection.licenseFiles, ["AGPL-LICENSE.txt"]);
 });
 
 test("tree export rejects floating revisions and unsupported entries", (t) => {
@@ -111,4 +132,54 @@ test("snapshot validation rejects changed bytes, permissions and unsafe paths", 
     update(changed);
     assert.throws(() => validateRepositorySnapshot(changed));
   }
+});
+
+test("validates a snapshot with hash-recorded excluded repository entries", () => {
+  const data = {
+    schemaVersion: 1,
+    commit: "a".repeat(40),
+    tree: "b".repeat(40),
+    scope: {
+      type: "repository-tree-with-recorded-exclusions",
+      excludedEntries: [
+        {
+          name: "fixtures/screenshot.png",
+          mode: "100644",
+          type: "blob",
+          object: "c".repeat(40),
+          size: 1024,
+          reason: "Visual fixture is outside the repair surface.",
+        },
+      ],
+    },
+    files: [{ name: "src/app.ts", mode: "100644", base64: Buffer.from("app").toString("base64") }],
+  };
+  const snapshot = { ...data, sha256: digest(data) };
+  assert.equal(validateRepositorySnapshot(snapshot), snapshot);
+  snapshot.scope.excludedEntries[0].name = "src/app.ts";
+  const { sha256: _sha256, ...changed } = snapshot;
+  snapshot.sha256 = digest(changed);
+  assert.throws(() => validateRepositorySnapshot(snapshot), /excluded/i);
+});
+
+test("validates recorded exclusions from a large public repository", () => {
+  const data = {
+    schemaVersion: 1,
+    commit: "a".repeat(40),
+    tree: "b".repeat(40),
+    scope: {
+      type: "repository-tree-with-recorded-exclusions",
+      excludedEntries: Array.from({ length: 15_001 }, (_, index) => ({
+        name: `catalog/${index.toString().padStart(5, "0")}.md`,
+        mode: "100644",
+        type: "blob",
+        object: index.toString(16).padStart(40, "0"),
+        size: 100,
+        reason: "Catalog content is outside the repair surface.",
+      })),
+    },
+    files: [{ name: "src/app.ts", mode: "100644", base64: Buffer.from("app").toString("base64") }],
+  };
+  const snapshot = { ...data, sha256: digest(data) };
+  assert.equal(validateRepositorySnapshot(snapshot), snapshot);
 });

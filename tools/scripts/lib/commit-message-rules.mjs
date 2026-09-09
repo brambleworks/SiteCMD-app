@@ -23,6 +23,20 @@ const VAGUE_SUBJECT =
   /^(?:(?:more|miscellaneous|misc) changes?|updates?|fix(?:es)?|cleanup|wip|work in progress|(?:fix|address|resolve|handle) (?:issues|feedback|findings|problems)|(?:public )?release (?:hardening|readiness)|hardening)$/i;
 const TRAILER = /^(?:Co-authored-by|Signed-off-by|Reviewed-by|Refs|Closes|Fixes):\s+\S/i;
 
+// Dependabot writes its own pull request titles and offers no title template,
+// so a grouped update carrying a single dependency names the package, both
+// versions, and the group, which runs past the length a human subject is held
+// to. These shapes are already imperative, colon-free plain English; only the
+// length allowance is relaxed, and only for a title that matches exactly.
+const DEPENDENCY_BUMP = [
+  /^Bump \S+ from \S+ to \S+(?: in the \S+ group)?$/,
+  /^Bump the \S+ group (?:across \d+ director(?:y|ies) )?with \d+ updates?$/,
+];
+
+function isDependencyBump(subject) {
+  return DEPENDENCY_BUMP.some((pattern) => pattern.test(subject));
+}
+
 function visibleLines(message) {
   const lines = String(message ?? "")
     .replace(/\r\n?/g, "\n")
@@ -62,7 +76,7 @@ export function commitMessageFailures(message, { subjectOnly = false } = {}) {
   const failures = [];
   const words = subject.split(/\s+/u);
 
-  if (subject.length > MAX_SUBJECT_LENGTH) {
+  if (subject.length > MAX_SUBJECT_LENGTH && !isDependencyBump(subject)) {
     failures.push(`Keep the subject at ${MAX_SUBJECT_LENGTH} characters or fewer.`);
   }
   if (words.length < 2) {

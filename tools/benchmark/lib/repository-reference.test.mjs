@@ -52,3 +52,26 @@ test("Derived references reject missing, duplicate, empty or mode-changing edit 
   changedMode.sha256 = digest(data);
   assert.throws(() => deriveRepositoryReference(baseline, changedMode, ["app.py"]), /mode/);
 });
+
+test("Derived references copy only declared upstream regions", () => {
+  const baseline = source("a", {
+    "app.py": "import one\nimport three\n\nSTART\nunsafe\nEND\nunrelated baseline\n",
+    LICENSE: "license",
+  });
+  const upstream = source("b", {
+    "app.py": "import one\nimport two\nimport three\n\nSTART\nsafe\nEND\nunrelated upstream\n",
+    LICENSE: "changed license",
+  });
+  const regions = [
+    { file: "app.py", start: "import one\n", end: "import three\n" },
+    { file: "app.py", start: "START\n", end: "END\n" },
+  ];
+  const reference = deriveRepositoryReference(baseline, upstream, ["app.py"], regions);
+  assert.equal(reference.kind, "implementation-regions");
+  assert.deepEqual(reference.regions, regions);
+  assert.equal(
+    Buffer.from(reference.files[0].base64, "base64").toString(),
+    "import one\nimport two\nimport three\n\nSTART\nsafe\nEND\nunrelated baseline\n",
+  );
+  assert.deepEqual(reference.files[1], baseline.files[1]);
+});

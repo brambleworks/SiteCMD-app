@@ -1,10 +1,17 @@
 import { pilotPolicy } from "./workflow-pilot.mjs";
+import { repositoryStudyPolicy } from "./workflow-repository-study.mjs";
+import { confirmatoryStudyPolicy } from "./workflow-confirmatory-study.mjs";
 
 export const agentVersions = { codex: "0.153.0-alpha.5", claude: "2.1.260" };
 export const reasoning = "high";
+const allowedModels = [
+  ...pilotPolicy.models,
+  ...repositoryStudyPolicy.models,
+  ...confirmatoryStudyPolicy.models,
+];
 
-export function trialConfigurations(environment) {
-  return pilotPolicy.models.map(({ agent, model }) => ({
+export function trialConfigurations(environment, models = pilotPolicy.models) {
+  return models.map(({ agent, model }) => ({
     id: `${agent}-${model.replaceAll(".", "-")}-${reasoning}`,
     agent,
     model,
@@ -14,27 +21,66 @@ export function trialConfigurations(environment) {
   }));
 }
 
-export function trialInvocation({ agent, model, arm, workspace, channel, proxy }) {
+function runtimeEnvironment(repositoryRuntime, channel) {
+  if (!repositoryRuntime) return {};
+  const expected = `/opt/sitecmd-benchmark/repository-runtimes/${repositoryRuntime.id}/${repositoryRuntime.installationId}`;
   if (
-    !pilotPolicy.models.some((item) => item.agent === agent && item.model === model) ||
+    !/^[a-f0-9]{64}$/.test(repositoryRuntime.id) ||
+    !/^[a-f0-9]{24}$/.test(repositoryRuntime.installationId) ||
+    repositoryRuntime.directory !== expected
+  )
+    throw new Error("Invalid benchmark repository runtime");
+  const virtualEnvironment = `${expected}/environment/venv`;
+  const environment = {
+    PATH: `${virtualEnvironment}/bin:/usr/local/bin:/usr/bin:/bin`,
+    VIRTUAL_ENV: virtualEnvironment,
+    PYTEST_ADDOPTS: "-o cache_dir=/tmp/sitecmd-pytest-cache",
+  };
+  if (repositoryRuntime.manifest?.caseId === "whoogle-named-config-path")
+    Object.assign(environment, {
+      STATIC_FOLDER: `${channel}/runtime/static`,
+      CONFIG_VOLUME: `${channel}/runtime/config`,
+      WHOOGLE_CONFIG_URL: "http://localhost/",
+    });
+  return environment;
+}
+
+export function trialInvocation({
+  agent,
+  model,
+  arm,
+  workspace,
+  channel,
+  proxy,
+  repositoryRuntime,
+}) {
+  if (
+    !allowedModels.some((item) => item.agent === agent && item.model === model) ||
     !["normal", "report", "mcp"].includes(arm)
   )
     throw new Error("Unsupported benchmark agent, model or arm");
-  const env = { PYTHONDONTWRITEBYTECODE: "1" };
+  const env = {
+    PYTHONDONTWRITEBYTECODE: "1",
+    PYTHONPYCACHEPREFIX: "/tmp/sitecmd-python-cache",
+    ...runtimeEnvironment(repositoryRuntime, channel),
+  };
   if (agent === "codex") {
+    const shellEnvironment = Object.entries(env)
+      .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
+      .join(",");
     const config = [
       'forced_login_method="chatgpt"',
       'approval_policy="never"',
       'history.persistence="none"',
       'model_reasoning_effort="high"',
-      'shell_environment_policy.set={PYTHONDONTWRITEBYTECODE="1"}',
+      `shell_environment_policy.set={${shellEnvironment}}`,
       'web_search="disabled"',
       "features.multi_agent=false",
       "features.memories=false",
       "features.hooks=false",
       "features.apps=false",
       'default_permissions="benchmark"',
-      `permissions.benchmark={extends=":workspace",filesystem={"/home/runner"="deny","/opt/sitecmd-benchmark/products"="deny",${JSON.stringify(workspace)}="write",${JSON.stringify(channel)}="read",${JSON.stringify(`${channel}/requests`)}="write"}}`,
+      `permissions.benchmark={extends=":workspace",filesystem={"/home/runner"="deny","/opt/sitecmd-benchmark/products"="deny",${JSON.stringify(workspace)}="write",${JSON.stringify(channel)}="read",${JSON.stringify(`${channel}/requests`)}="write"${repositoryRuntime ? `,${JSON.stringify(repositoryRuntime.directory)}="read",${JSON.stringify(`${channel}/runtime`)}="write"` : ""}}}`,
       ...(arm === "mcp"
         ? [
             'mcp_servers.sitecmd.command="node"',
@@ -75,8 +121,12 @@ export function trialInvocation({ agent, model, arm, workspace, channel, proxy }
       allowUnsandboxedCommands: false,
       filesystem: {
         denyRead: ["/home/runner", "/opt/sitecmd-benchmark/products"],
-        allowRead: [workspace, channel],
-        allowWrite: [`${channel}/requests`],
+        allowRead: [
+          workspace,
+          channel,
+          ...(repositoryRuntime ? [repositoryRuntime.directory] : []),
+        ],
+        allowWrite: [`${channel}/requests`, ...(repositoryRuntime ? [`${channel}/runtime`] : [])],
       },
       network: { allowedDomains: [], strictAllowlist: true },
     },

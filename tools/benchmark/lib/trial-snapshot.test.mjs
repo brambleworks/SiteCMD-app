@@ -33,6 +33,18 @@ test("snapshots retain untracked binary additions and ignore only Git metadata",
   assert.deepEqual(result.violations, []);
 });
 
+test("the 1000-file source allowance does not count parent directories as files", (t) => {
+  const directory = mkdtempSync(path.join(tmpdir(), "sitecmd-snapshot-tree-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  for (let index = 0; index < 1000; index++) {
+    const parent = path.join(directory, `group-${Math.floor(index / 10)}`);
+    mkdirSync(parent, { recursive: true });
+    writeFileSync(path.join(parent, `file-${index}.txt`), String(index));
+  }
+  const result = readCandidate(directory);
+  assert.equal(Object.keys(result.files).length, 1000);
+});
+
 test("snapshots do not follow symlinks or accept suppression-only changes", () => {
   const directory = mkdtempSync(path.join(tmpdir(), "sitecmd-snapshot-"));
   symlinkSync("/outside/private", path.join(directory, "escape"));

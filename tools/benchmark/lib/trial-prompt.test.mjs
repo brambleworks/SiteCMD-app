@@ -26,6 +26,14 @@ test("the normal workflow retains the shared task without exposing SiteCMD evide
   assert.doesNotMatch(prompt, /Private|project #7|get_fix_brief|request_verification/);
 });
 
+test("repository trials disclose the active dependency environment", () => {
+  const prompt = trialPrompt({ ...options, arm: "normal", repositoryRuntime: true });
+  assert.match(prompt, /project dependency environment is already active/i);
+  assert.match(prompt, /do not install dependencies/i);
+  assert.match(prompt, /python -m pytest/);
+  assert.match(prompt, /override.*STATIC_FOLDER.*CONFIG_VOLUME/i);
+});
+
 test("report and MCP workflows require their own evidence before releasing a prompt", () => {
   const report = trialPrompt({ ...options, arm: "report" });
   assert.ok(report.endsWith(options.report));

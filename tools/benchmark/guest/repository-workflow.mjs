@@ -12,19 +12,25 @@ import { prepareProject, trialUrl } from "./trial-setup.mjs";
 import { initializeMcp, openMcp } from "./mcp-session.mjs";
 import { verifyControlIsolation } from "./trial-isolation.mjs";
 import { verifyLinkdingRuntime } from "./linkding-runtime.mjs";
+import { verifyWhoogleRuntime } from "./whoogle-runtime.mjs";
 
 if (process.platform !== "linux" || process.getuid() !== 0)
   throw new Error("Repository workflow checks require the isolated guest controller");
 const { id, definition, sources, product, runtime } = JSON.parse(readFileSync(0, "utf8"));
 const linkding = definition.id === "linkding-asset-sandbox";
+const whoogle = definition.id === "whoogle-named-config-path";
 const pinned = JSON.parse(
   readFileSync(
-    new URL(`../cases/${linkding ? "linkding" : "repository"}-calibration.json`, import.meta.url),
+    new URL(
+      `../cases/${whoogle ? "whoogle" : linkding ? "linkding" : "repository"}-calibration.json`,
+      import.meta.url,
+    ),
   ),
 );
 if (!/^[a-f0-9]{32}$/.test(id) || digest(definition) !== digest(pinned))
   throw new Error("Repository definition differs from the frozen harness");
 if (linkding) verifyLinkdingRuntime(runtime);
+if (whoogle) verifyWhoogleRuntime(runtime);
 if (
   !/^[a-f0-9]{40}$/.test(product.commit) ||
   product.binary !== "/usr/bin/sitecmd" ||

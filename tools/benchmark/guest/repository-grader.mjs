@@ -3,9 +3,25 @@ import { executeCandidate } from "./candidate-sandbox.mjs";
 import { gradeTornado } from "./tornado-grader.mjs";
 import { gradeLinkding } from "./linkding-grader.mjs";
 import { probeLinkdingBrowser } from "./linkding-browser-grader.mjs";
+import { gradeWhoogle } from "./whoogle-grader.mjs";
+import { gradeFlaskReuploaded } from "./flask-reuploaded-grader.mjs";
+import { gradeConfirmatoryRepository } from "./confirmatory-grader.mjs";
 
 export function gradeRepository(item, candidate, execute = executeCandidate) {
   if (item.id === "tornado-static-redirect") return gradeTornado(candidate, execute);
+  if (item.id === "whoogle-named-config-path") {
+    return {
+      ...gradeWhoogle(candidate, execute, item.repositoryRuntime),
+      runtimeSha256: digest(item.repositoryRuntime),
+    };
+  }
+  if (item.repository === "flask-reuploaded") {
+    return {
+      ...gradeFlaskReuploaded(item.id, candidate, execute, item.repositoryRuntime),
+      runtimeSha256: digest(item.repositoryRuntime),
+    };
+  }
+  if (item.confirmatory === true) return gradeConfirmatoryRepository(item, candidate, execute);
   if (item.id !== "linkding-asset-sandbox") throw new Error("Unsupported repository grader");
   const django = gradeLinkding(candidate, execute, item.repositoryRuntime);
   const browser = probeLinkdingBrowser(

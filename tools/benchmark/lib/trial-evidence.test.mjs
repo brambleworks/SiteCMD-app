@@ -95,6 +95,44 @@ test("Linkding evidence preserves both registered runtime receipts for export", 
   }
 });
 
+test("Whoogle evidence preserves its registered repository runtime", (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "sitecmd-whoogle-runtime-export-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repositoryRuntime = { fixture: "Whoogle Python runtime" };
+  const study = fixtureStudy();
+  study.tasks = [
+    {
+      ...study.tasks[0],
+      id: "whoogle-named-config-path",
+      sourceSha256: digest({}),
+      runtimeSha256: digest(repositoryRuntime),
+    },
+  ];
+  const plan = createPlan(study);
+  const evidence = createEvidence(
+    root,
+    plan,
+    plan.assignments[0],
+    { id: "whoogle-named-config-path", repositoryRuntime },
+    {},
+    root,
+  );
+  writeFileSync(path.join(root, "transcript.jsonl"), "No model calls\n");
+  evidence.finish({
+    status: "completed",
+    elapsedMs: 0,
+    configuration: study.configurations[0],
+    quotaAllowed: true,
+    agentInvoked: false,
+  });
+  const usage = JSON.parse(readFileSync(path.join(root, "usage.json")));
+  assert.ok(usage.raw.includes("repository-runtime.json"));
+  assert.deepEqual(
+    JSON.parse(readFileSync(path.join(root, "repository-runtime.json"))),
+    repositoryRuntime,
+  );
+});
+
 test("deferred candidates count only when accepted and rejected captures remain preserved", (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), "sitecmd-capture-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
