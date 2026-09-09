@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { digest } from "./workflow-plan.mjs";
 import { guestCommand } from "./vm-guest.mjs";
 
-export function deployHarness() {
+export function harnessFiles() {
   const directory = fileURLToPath(new URL("../guest/", import.meta.url));
   const files = {};
   for (const name of readdirSync(directory).filter((name) => /\.(mjs|py|apparmor)$/.test(name)))
@@ -16,6 +16,7 @@ export function deployHarness() {
     "workflow-contract",
     "workflow-plan",
     "workflow-quota",
+    "workflow-controller-amendment",
     "workflow-codex-quota",
     "workflow-claude-quota",
     "workflow-continuation",
@@ -44,7 +45,6 @@ export function deployHarness() {
     "repository-corpus",
     "repository-scanner-eligibility",
     "confirmatory-workflow",
-    "confirmatory-study-arguments",
   ])
     files[`lib/${name}.mjs`] = readFileSync(new URL(`./${name}.mjs`, import.meta.url), "utf8");
   files["pilot-policy.json"] = readFileSync(
@@ -124,6 +124,11 @@ export function deployHarness() {
     new URL("./vm-trial-export.mjs", import.meta.url),
     "utf8",
   );
+  return files;
+}
+
+export function deployHarness() {
+  const files = harnessFiles();
   const id = digest(files);
   const destination = `/srv/sitecmd-benchmark/controllers/${id}`;
   guestCommand(["sudo", "node", "--input-type=module", "-e", files["guest/install-harness.mjs"]], {

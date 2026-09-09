@@ -44,6 +44,7 @@
     "benchmark:repository:confirm": "node ./tools/benchmark/qualify-confirmatory-corpus.mjs",
     "benchmark:repository:workflow:confirm": "node ./tools/benchmark/qualify-confirmatory-workflows.mjs",
     "benchmark:repository:prepare:confirm": "node ./tools/benchmark/prepare-confirmatory-study.mjs",
+    "benchmark:controller:amend": "node ./tools/benchmark/create-controller-amendment.mjs",
     "benchmark:repository:workflow": "node ./tools/benchmark/qualify-repository.mjs --workflow",
     "benchmark:repository:selftest": "node ./tools/benchmark/selftest-repository.mjs",
     "benchmark:corpus:runtime": "node ./tools/benchmark/prepare-corpus-runtime.mjs",

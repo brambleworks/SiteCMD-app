@@ -10,6 +10,7 @@ import { guestCommand, guestProcess } from "./lib/vm-guest.mjs";
 import { verifyContinuation } from "./lib/workflow-continuation.mjs";
 import { loadTrialSource } from "./lib/trial-source.mjs";
 import { buildTrialItem } from "./lib/trial-item.mjs";
+import { verifyControllerAmendment } from "./lib/workflow-controller-amendment.mjs";
 
 const supplied = process.argv[2];
 if (!supplied) throw new Error("Usage: run-next.mjs RUN_DIRECTORY");
@@ -38,8 +39,8 @@ try {
 if (readFileSync(baselineHashFile, "utf8") !== digest(baseline))
   throw new Error("The original quota baseline changed; do not rebase the approved allowance");
 const harness = deployHarness();
-if (harness.id !== plan.study.runnerSha256)
-  throw new Error("Runner changed after registration; prepare a new study before any trials");
+const controllerAmendment =
+  harness.id === plan.study.runnerSha256 ? null : verifyControllerAmendment(run, plan, harness);
 const corpus = JSON.parse(readFileSync(path.join(run, "inputs", "corpus.json")));
 if (digest(corpus) !== plan.study.corpusSha256) throw new Error("Frozen corpus changed");
 const item = corpus.find((item) => item.id === assignment.task);
@@ -76,6 +77,7 @@ const child = guestProcess(
     report,
     baseline,
     current,
+    controllerAmendment,
   }),
 );
 let output = "";

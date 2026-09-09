@@ -231,6 +231,9 @@ export function createEvidence(directory, plan, assignment, item, source, worksp
         "quota-events.jsonl",
         "quota-baseline.json",
         "quota-current.json",
+        ...(existsSync(path.join(directory, "controller-amendment.json"))
+          ? ["controller-amendment.json"]
+          : []),
         ...(task.sourceFormat ? ["source.json"] : []),
         ...runtimes.map(([, , file]) => file),
         ...(agentInvoked ? ["prompt.txt", "final-candidate.json"] : []),

@@ -214,6 +214,20 @@ Do not rerun an assignment after model usage. If transport or import fails, reta
 the guest trial directory and recover/import that evidence instead of deleting it
 to start over. Ctrl-C stops the active agent; keep the VM running for evidence export.
 
+If a provider changes quota-window bookkeeping after a confirmatory batch starts,
+fix only the controller and record the boundary before resuming:
+
+```bash
+pnpm benchmark:controller:amend RUN_DIRECTORY "Explain the quota controller correction"
+```
+
+The amendment is fail-closed. It compares the frozen and corrected runner byte by
+byte, permits only the quota controller and its evidence plumbing to differ, pins
+the complete executed prefix and original quota baseline, and refuses an amendment
+after any assignment in the registered primary population. Every later trial
+embeds the receipt. A prompt, grader, corpus, model, limit, or product change still
+requires a new study and never authorizes rerunning an observed assignment.
+
 Normal/report workflows submit through the provided local submission command.
 MCP repairs submit through the real `request_verification` tool. Requestable
 attempts are checked before capture; candidates count only after the server
@@ -494,12 +508,6 @@ then use `pnpm benchmark:run RUN_DIRECTORY` once per assignment. The first actua
 response establishes model availability; the runner never substitutes a fallback.
 This single historical task can expose executor or workflow failures and estimate
 case-specific behavior. It cannot support a general product or marketing claim.
-
-The confirmatory runner also accepts `--continue-from` and `--reason` after a
-controller-only correction. It retains the complete executed prefix and the
-original allowance. A confirmatory continuation is permitted only when every
-retained assignment falls outside the preregistered primary population, so no
-primary repair assignment can be replaced or rerun under a different controller.
 
 ## Retired repository confirmation
 

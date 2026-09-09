@@ -31,8 +31,19 @@ import { prepareRepositoryAgentRuntime } from "./repository-agent-runtime.mjs";
 if (process.platform !== "linux" || process.getuid() !== 0)
   throw new Error("Guest controller required");
 const input = JSON.parse(readFileSync(0, "utf8"));
-const { assignment, item, files: source, product, baseline, current } = input;
+const { assignment, item, files: source, product, baseline, current, controllerAmendment } = input;
 const plan = validatePlan(input.plan);
+const controllerSha256 = import.meta.url.match(
+  /\/controllers\/([a-f0-9]{64})\/guest\/run-trial\.mjs$/,
+)?.[1];
+if (controllerAmendment) {
+  if (
+    controllerAmendment.studySha256 !== plan.studySha256 ||
+    controllerAmendment.correctedRunnerSha256 !== controllerSha256
+  )
+    throw new Error("Controller amendment differs from the installed runner");
+} else if (controllerSha256 !== plan.study.runnerSha256)
+  throw new Error("Installed runner differs from the frozen study");
 if (!plan.assignments.some((entry) => digest(entry) === digest(assignment)))
   throw new Error("Unknown assignment");
 const task = plan.study.tasks.find((task) => task.id === assignment.task);
@@ -78,6 +89,8 @@ for (const [file, hash] of [
     throw new Error("Installed product changed after freezing");
 const directory = `/srv/sitecmd-benchmark/trials/${assignment.id}`;
 mkdirSync(directory, { recursive: true, mode: 0o700 });
+if (controllerAmendment)
+  writeNewJson(`${directory}/controller-amendment.json`, controllerAmendment);
 writeNewJson(`${directory}/quota-baseline.json`, baseline);
 writeNewJson(`${directory}/quota-current.json`, current);
 const workspace = `/srv/sitecmd-benchmark/workspaces/${assignment.id}`;
