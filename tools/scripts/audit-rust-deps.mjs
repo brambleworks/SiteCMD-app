@@ -12,25 +12,6 @@ const ALLOWED_WARNING_ADVISORIES = new Map([
       reviewedAt: "2026-05-18",
     },
   ],
-  ...[
-    "RUSTSEC-2024-0411",
-    "RUSTSEC-2024-0412",
-    "RUSTSEC-2024-0413",
-    "RUSTSEC-2024-0414",
-    "RUSTSEC-2024-0415",
-    "RUSTSEC-2024-0416",
-    "RUSTSEC-2024-0417",
-    "RUSTSEC-2024-0418",
-    "RUSTSEC-2024-0419",
-    "RUSTSEC-2024-0420",
-  ].map((id) => [
-    id,
-    {
-      reason:
-        "GTK3 bindings are pulled transitively through Tauri/Wry on Linux; revisit on Tauri/Wry GTK4 migration.",
-      reviewedAt: "2026-05-18",
-    },
-  ]),
   [
     "RUSTSEC-2024-0429",
     {
