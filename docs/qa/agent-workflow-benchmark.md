@@ -9,9 +9,12 @@ Protocol version: `agent-workflow-v1`.
 
 The [benchmark operator guide](../../tools/benchmark/README.md) documents the
 planner, isolated Linux desktop executor, evidence importer, review receipts, and
-report commands. The subscription runner supports five owned calibration cases.
-The separate synthetic fixture exercises the evidence pipeline, not the product's
-benefit. Neither kind of calibration establishes a marketing claim.
+report commands. The subscription runner supports the completed five-case owned
+pilot and an explicit historical Whoogle runner calibration. The first
+scanner-enriched repository study is retained as invalidated diagnostic evidence
+and cannot be run again. The separate synthetic fixture exercises the evidence
+pipeline, not the product's benefit. Calibration and invalidated results do not
+establish a marketing claim.
 
 ## Comparisons
 
@@ -40,18 +43,21 @@ review is required before making several simultaneous superiority claims.
 
 ## Cases and independent acceptance
 
-Start with the subscription pilot below, then review consumption and execution
-quality before expanding calibration. A larger calibration set should include
-20 distinct repair tasks and separate negative controls. Use calibration to
-validate the runner, estimate usage and paired disagreement rates, and identify
-flaky graders. Do not use calibration outcomes as confirmation.
+Use calibration to validate the runner, estimate usage and paired disagreement
+rates, and identify flaky graders. Do not use calibration outcomes as
+confirmation. Freeze the final sample size, cases, configurations, endpoints,
+and stopping rules before confirmatory model trials. Do not stop when a favorable
+result appears.
 
-An initial planning target is 100 held-out repair tasks from 10 to 15 repositories,
-plus approximately 20 negative controls. This is not a guarantee of statistical
-power. Freeze the final sample size using calibration variance, repository
-clustering, the smallest useful effect, and the chosen confidence/power targets.
-Do not stop when a favorable result appears. Three repeats and two agent/model
-configurations would require 2,160 trials for that 120-case example.
+The first registered repository study completed 96 assignments across six repairs,
+two negative controls, four model configurations, and three paired workflows. A
+post-run validity review invalidated it because one scanner target did not match
+the task's semantic location, raw-HTML findings and fix verification were not
+occurrence-specific, and one grader omitted a required whitespace regression.
+Its negative outcome remains useful for diagnosing the product and protocol, but
+none of its rates or token measurements may support a product or marketing claim.
+The invalidation registry makes the runner reject that study ID and makes reports
+label its evidence diagnostic-only.
 
 Start with Code Scan. Evaluate Web Scan separately with controlled, resettable
 deployments; it must have its own sufficient sample. Neither code-only results
@@ -65,10 +71,23 @@ examples. Do not select cases after seeing an agent's result. Keep calibration
 and confirmation separate at repository level where practical, and disclose
 possible model exposure to public historical fixes.
 
+A replacement confirmation requires a fresh corpus that no repair agent has seen.
+Each registered finding must overlap a task-specific semantic source anchor, and
+every repeated rule in a file must remain a separate scanner, handoff, and
+verification target. Graders must assert the complete observable contract,
+including formatting or whitespace where relevant. The earlier source-first
+intake of 12 historical repairs passed source screening but produced no eligible
+target detections; those misses remain selection-attrition evidence. Results from
+any scanner-enriched corpus are conditional on SiteCMD detecting the issue and do
+not estimate scanner recall or performance over all software defects.
+
 Each case needs:
 
 - A frozen source snapshot, actionable prompt, expected behavior, relevant full
   report, and independently maintained grader, with content digests.
+- An explicit observable contract wherever multiple safe repairs differ. State
+  whether invalid values must be rejected or normalized, which existing values
+  remain valid, and whether persisted identifiers must retain their exact bytes.
 - A baseline that fails the defect-specific acceptance check but passes the
   unrelated regression checks. Demonstrate both before measuring agents.
 - A reviewed reference patch that passes acceptance and regression checks.
@@ -92,9 +111,9 @@ removing a required feature does not fix the defect.
 
 The [pilot policy](../../tools/benchmark/pilot-policy.json) fixes this first batch:
 
-- Codex `gpt-5.6-sol` and Claude Code `claude-opus-5`, through subscription logins.
+- Exact models listed in the policy, through Codex and Claude Code subscription logins.
 - Five Code Scan cases: four repairs and one negative control, three workflows,
-  two agents, one repeat, totaling 30 trials.
+  one repeat, totaling 15 trials per model configuration.
 - Twenty minutes and three submitted candidates per trial. Tokens are measured;
   there is no separate token cap for this allowance-based batch.
 - No additional spending, API fallback, extra credits, or automatic usage resets.
@@ -192,9 +211,13 @@ The included runner withholds all hidden-grader feedback, captures candidates
 before forwarding the real MCP verification request, and requires an explicit
 submission in the other workflows. Ordinary project tests remain available.
 Unsubmitted edits or an interrupted run cannot count as final acceptance.
-Record explicit model selection separately from provider-observed identity;
-absent identity stays unknown and blocks claim review. An unexpected model stops
-the trial and must not contribute successful fixes to the requested model's results.
+Record explicit model selection separately from provider-observed identity.
+Claude Code must provide complete matching response metadata. The pinned Codex
+client does not emit a response-model field, so its evidence is the exact strict
+CLI selection plus one complete, clean event lifecycle; label that assurance
+accordingly and never describe it as provider-observed identity. Incomplete,
+conflicting, or unexpected evidence stops the trial and must not contribute a
+successful fix to the requested model's results.
 
 Enforce token, dollar, submission, and elapsed-time caps in the execution adapter,
 including delegated agents and tool-triggered model calls. The importer detects
@@ -243,13 +266,17 @@ of fixing exactly the same subset of defects. A matched-success subset can be a
 secondary diagnostic, but cannot replace the full-trial result. Zero accepted
 repairs yield an undefined ratio, not infinite savings.
 
-Keep model configurations, scan surfaces, repair tasks, and negative controls
-separate. Repeats estimate variability; they do not create new independent tasks.
+Keep scan surfaces, repair tasks, and negative controls separate. Keep model
+configurations separate unless a fixed configuration mixture and its weights were
+preregistered. A fixed multi-configuration confirmation uses its preregistered
+weights and always shows disaggregated results. Repeats estimate variability; they
+do not create new independent tasks.
 The report uses a seeded 95% hierarchical bootstrap, resampling repositories and
-then tasks while preserving all repeats and paired workflows. Fewer than two
-repository clusters cannot produce an interval; few clusters remain weak evidence
-even when an interval can be calculated. Undefined bootstrap ratios are reported
-as unavailable rather than discarded to make an interval look stable.
+then tasks while preserving all configurations, repeats, and paired workflows
+within a task. Fewer than two repository clusters cannot produce an interval;
+few clusters remain weak evidence even when an interval can be calculated.
+Undefined bootstrap ratios are reported as unavailable rather than discarded to
+make an interval look stable.
 
 Report absolute percentage-point differences and relative changes together. A
 hypothetical change from 40% to 60% is 20 percentage points and 50% relative
@@ -282,14 +309,17 @@ an operator ran a fair experiment. Independently review raw traces and execution
 conditions before publishing.
 
 State the tested population and comparison next to a numerical claim. Prefer
-"On [N] held-out Code Scan repairs using [agent/model/version], [X]% versus [Y]%
-were accepted on the first submission" over "AI fixes issues [Z]% better."
+"On [N] registered scanner-detected Code Scan repairs using
+[agent/model/version], [X]% versus [Y]% were accepted on the first submission"
+over "AI fixes issues [Z]% better."
 For efficiency, say "[Z]% fewer total tokens per independently accepted repair,
 including failed trials" if that is what was measured. Never publish placeholders.
 
 Calibration and fixtures cannot substantiate confirmatory claims. A report marked
 ready for claim review still needs a reviewer to assess study validity, precision,
 scope, raw evidence, and the proposed wording. It is not publication approval.
+An entry in `tools/benchmark/invalidated-studies.json` permanently blocks claim
+readiness regardless of statistical output.
 
 ## Methodological references
 

@@ -1,15 +1,38 @@
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { validateRepositorySnapshot } from "../lib/repository-snapshot.mjs";
+import { digest } from "../lib/workflow-plan.mjs";
 import { createWorkspace, mountDesktopWorkspace, closeWorkspace } from "./trial-workspace.mjs";
 
 const { cases, product } = JSON.parse(readFileSync(0, "utf8"));
+if (
+  !/^[a-f0-9]{40}$/.test(product?.commit ?? "") ||
+  product.cli !== `/opt/sitecmd-benchmark/products/${product.commit}/sitecmd_cli` ||
+  digest(readFileSync(product.cli)) !== product.cliSha256
+)
+  throw new Error("The installed scanner differs from its product receipt");
+
+function variantSource(item, variant) {
+  const snapshot = item[`${variant}Snapshot`];
+  if (!snapshot) return { files: item[`${variant}Files`], modes: {} };
+  validateRepositorySnapshot(snapshot);
+  return {
+    files: Object.fromEntries(
+      snapshot.files.map((file) => [file.name, Buffer.from(file.base64, "base64")]),
+    ),
+    modes: Object.fromEntries(snapshot.files.map((file) => [file.name, file.mode])),
+  };
+}
+
 const results = [];
 for (const item of cases) {
   const reports = {};
-  for (const variant of ["baseline", "reference"]) {
+  const variants = item.upstreamSnapshot ? ["baseline", "upstream"] : ["baseline", "reference"];
+  for (const variant of variants) {
     const id = randomBytes(16).toString("hex");
-    const workspace = createWorkspace(id, item[`${variant}Files`]);
+    const source = variantSource(item, variant);
+    const workspace = createWorkspace(id, source.files, source.modes);
     let mounted;
     try {
       mounted = mountDesktopWorkspace(id, workspace);

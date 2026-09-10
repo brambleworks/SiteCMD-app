@@ -166,8 +166,12 @@ pub(crate) fn create_fix_attempt_inner(
     // A mapped Code rule may intentionally share a Web canonical id (for
     // example hsts_missing -> security.hsts). The structured location, not
     // the canonical id prefix, determines whether this is an occurrence fix.
-    let attempt_target = match code_locations.as_deref() {
-        Some([location]) => FixAttemptTarget::occurrence(location.path.clone(), location.line),
+    let occurrence_target = match code_locations.as_deref() {
+        Some([location]) => Some(location.clone()),
+        _ => None,
+    };
+    let attempt_target = match occurrence_target.as_ref() {
+        Some(location) => FixAttemptTarget::occurrence(location.path.clone(), location.line),
         _ => FixAttemptTarget::group(),
     };
     reject_suppressed_code_occurrence(db, project_id, &env_url, &check_id, &attempt_target, now)?;
@@ -224,6 +228,7 @@ pub(crate) fn create_fix_attempt_inner(
         url,
         detected_stack,
         previous_failure,
+        occurrence_target,
     };
     let brief = build_fix_brief(&input, &locations);
     if let Err(err) = db.update_fix_attempt_brief(id, &brief, now) {
@@ -261,13 +266,21 @@ pub async fn get_fix_attempt_for_issue(
     env_url: Option<String>,
     check_id: String,
     title: String,
+    target_relative_path: Option<String>,
+    target_line: Option<u32>,
 ) -> Result<Option<FixAttemptDto>, String> {
     let Ok(env_url) = require_issue_env_url(env_url) else {
         return Ok(None);
     };
+    let target = match target_relative_path {
+        Some(path) => FixAttemptTarget::occurrence(path, target_line),
+        None => FixAttemptTarget::group(),
+    };
     let db = (*db).clone();
-    let row =
-        run_blocking(move || db.get_latest_fix_attempt(project_id, &env_url, &check_id)).await??;
+    let row = run_blocking(move || {
+        db.get_latest_fix_attempt_for_target(project_id, &env_url, &check_id, target)
+    })
+    .await??;
     Ok(row.map(|row| attempt_dto(row, &title)))
 }
 

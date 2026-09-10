@@ -408,7 +408,7 @@ pub(super) fn collect_architecture_issues(
     if !pattern_registry && !scanner_rule_impl && route_like {
         // Require both child_process use and a shell call.
         let has_child_process = content.contains("child_process");
-        let has_shell_exec = has_child_process && has_any(content, &EXEC_SPAWN_PATTERNS);
+        let has_shell_exec = has_child_process && has_any(content, &SHELL_COMMAND_PATTERNS);
         let has_safe_exec = has_any(content, &EXEC_SAFE_PATTERNS);
 
         // Python and PHP use their dedicated taint checks.
@@ -443,7 +443,9 @@ pub(super) fn collect_architecture_issues(
             && !is_py
             && !js_command_injection_fired
         {
-            let first_match = EXEC_SPAWN_PATTERNS.iter().find_map(|pat| pat.find(content));
+            let first_match = SHELL_COMMAND_PATTERNS
+                .iter()
+                .find_map(|pat| pat.find(content));
             let line = first_match
                 .map(|m| line_number(content, m.start()))
                 .unwrap_or(1);

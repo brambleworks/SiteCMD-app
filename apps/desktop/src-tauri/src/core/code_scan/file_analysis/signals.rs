@@ -68,7 +68,6 @@ pub(super) struct FileAnalysisSignals {
     pub(super) has_transaction: bool,
     pub(super) has_unsafe_raw_sql: bool,
     pub(super) dangerous_html: bool,
-    pub(super) has_sanitization: bool,
     pub(super) write_handler: bool,
     pub(super) sensitive_handler: bool,
     pub(super) public_risk_endpoint: bool,
@@ -267,7 +266,6 @@ impl FileAnalysisSignals {
         let dangerous_html = !pattern_registry
             && has_any_unquoted(content, &DANGEROUS_HTML_PATTERNS)
             && !is_json_ld_serialization_sink(content);
-        let has_sanitization = has_any(content, &SANITIZATION_PATTERNS);
         let ssrf_like = has_any(content, &SSRF_PATTERNS);
         let has_ssrf_guard = has_any(content, &SSRF_GUARD_PATTERNS);
         let write_handler_raw = is_write_handler(&lower);
@@ -295,9 +293,16 @@ impl FileAnalysisSignals {
             has_any(content, &USER_CONTROLLED_STRIPE_PRICE_PATTERNS);
         let has_redirect_sink = has_any(content, &REDIRECT_SINK_PATTERNS);
         let has_user_controlled_redirect = has_any(content, &USER_CONTROLLED_REDIRECT_PATTERNS);
-        let has_redirect_allowlist = has_any(content, &REDIRECT_ALLOWLIST_PATTERNS);
         let has_user_controlled_stripe_redirect =
             has_any(content, &USER_CONTROLLED_STRIPE_REDIRECT_PATTERNS);
+        let has_redirect_allowlist = if is_js_source_path(&file.relative_path) {
+            route_like
+                && ((has_redirect_sink && has_user_controlled_redirect)
+                    || (uses_stripe_checkout && has_user_controlled_stripe_redirect))
+                && super::redirect_guards::has_guarded_redirects(content, uses_stripe_checkout)
+        } else {
+            has_any(content, &REDIRECT_ALLOWLIST_PATTERNS)
+        };
         let has_stripe_price_allowlist = has_any(content, &STRIPE_PRICE_ALLOWLIST_PATTERNS);
         let has_email_flow = has_any(content, &EMAIL_PATTERNS);
         let user_controlled_fetch = route_like && ssrf_like && !has_ssrf_guard;
@@ -452,7 +457,6 @@ impl FileAnalysisSignals {
             has_transaction,
             has_unsafe_raw_sql,
             dangerous_html,
-            has_sanitization,
             write_handler,
             sensitive_handler,
             public_risk_endpoint,

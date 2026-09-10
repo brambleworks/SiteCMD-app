@@ -140,7 +140,7 @@ pub(super) fn call_arg_window(content: &str, after: usize, cap: usize) -> &str {
 }
 
 /// Return the first top-level argument, ignoring commas in strings and nested values.
-fn first_arg(window: &str) -> &str {
+pub(super) fn first_arg(window: &str) -> &str {
     let bytes = window.as_bytes();
     let mut depth: i32 = 0;
     let mut quote: Option<u8> = None;

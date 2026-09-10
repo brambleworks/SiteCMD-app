@@ -16,6 +16,7 @@ pub struct FixBriefInput {
     pub url: String,
     pub detected_stack: Option<serde_json::Value>,
     pub previous_failure: Option<String>,
+    pub occurrence_target: Option<BriefLocation>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, ts_rs::TS)]
@@ -71,12 +72,7 @@ pub fn build_fix_brief(input: &FixBriefInput, locations: &[BriefLocation]) -> St
     push_section(
         &mut brief,
         "Acceptance criteria",
-        &format!(
-            "After you finish, SiteCMD will re-run the `{}` check against {}. \
-             The fix is only accepted if that check passes. \
-             Make the smallest change that satisfies it.",
-            input.check_id, input.url
-        ),
+        &render_acceptance_criteria(input),
     );
 
     push_section(
@@ -168,6 +164,30 @@ fn render_where_to_look(input: &FixBriefInput, locations: &[BriefLocation]) -> S
         .join("\n")
 }
 
+fn render_acceptance_criteria(input: &FixBriefInput) -> String {
+    if let Some(target) = &input.occurrence_target {
+        let location = target.line.map_or_else(
+            || format!("`{}`", target.path),
+            |line| format!("`{}:{line}`", target.path),
+        );
+        return format!(
+            "After you finish, SiteCMD will re-run the `{}` check against {} and \
+             evaluate the reported occurrence at {location}. Only this reported \
+             occurrence needs to clear; findings from the same check elsewhere are \
+             separate. Preserve the intended behavior and make the smallest change \
+             that fixes the reported risk.",
+            input.check_id, input.url
+        );
+    }
+
+    format!(
+        "After you finish, SiteCMD will re-run the `{}` check against {}. \
+         The fix is only accepted if that check passes. Make the smallest change \
+         that satisfies it.",
+        input.check_id, input.url
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,6 +205,7 @@ mod tests {
             url: "https://example.com".to_string(),
             detected_stack: None,
             previous_failure: None,
+            occurrence_target: None,
         }
     }
 
@@ -249,16 +270,18 @@ mod tests {
 
     #[test]
     fn code_locations_render_with_line_numbers() {
-        let input = base_input();
+        let mut input = base_input();
         let location = BriefLocation {
             label: "query".to_string(),
             path: "src/db.ts".to_string(),
             line: Some(118),
             reason: "Unparameterized SQL is built here".to_string(),
         };
+        input.occurrence_target = Some(location.clone());
         let brief = build_fix_brief(&input, &[location]);
 
         assert!(brief.contains("src/db.ts:118"));
+        assert!(brief.contains("Only this reported occurrence needs to clear"));
     }
 
     #[test]

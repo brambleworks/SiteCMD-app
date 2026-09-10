@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useEffectEvent,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -103,8 +104,17 @@ export function FixWithAgentAction({
   onOpenIntegrations,
 }: FixWithAgentActionProps) {
   const { success, error: toastError } = useToast();
+  const occurrencePath = codeLocations?.length === 1 ? codeLocations[0].path : undefined;
+  const occurrenceLine = codeLocations?.length === 1 ? codeLocations[0].line : undefined;
+  const occurrenceTarget = useMemo(
+    () =>
+      occurrencePath === undefined
+        ? undefined
+        : { path: occurrencePath, line: occurrenceLine ?? null },
+    [occurrencePath, occurrenceLine],
+  );
   // The module store keeps the modal alive across dashboard remounts.
-  const handoffStoreKey = fixHandoffKey(projectId, envUrl, checkId);
+  const handoffStoreKey = fixHandoffKey(projectId, envUrl, checkId, occurrenceTarget);
   const handoff = useSyncExternalStore(subscribeFixHandoff, () => getFixHandoff(handoffStoreKey));
   // null while detect_agent_tools is still running for this open.
   const [tools, setTools] = useState<AgentToolStatus[] | null>(null);
@@ -155,12 +165,12 @@ export function FixWithAgentAction({
   const refetchTrackedAttempt = useCallback(async () => {
     if (trackedAttemptId === null) return;
     try {
-      const next = await getFixAttemptForIssue(projectId, envUrl, checkId, title);
+      const next = await getFixAttemptForIssue(projectId, envUrl, checkId, title, occurrenceTarget);
       if (!disposedRef.current && next && next.id === trackedAttemptId) setLiveAttempt(next);
     } catch {
       // The next poll retries.
     }
-  }, [trackedAttemptId, projectId, envUrl, checkId, title]);
+  }, [trackedAttemptId, projectId, envUrl, checkId, title, occurrenceTarget]);
 
   useEffect(() => {
     if (!progressActive) return;

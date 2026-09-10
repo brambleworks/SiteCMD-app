@@ -176,15 +176,15 @@ fn skips_open_redirect_when_server_action_guards_relative_redirects() {
                 export async function finishFlow(formData: FormData) {
                   const redirectTo = String(formData.get("redirectTo") ?? "/dashboard");
                   if (!redirectTo.startsWith("/")) {
-                    redirect("/dashboard");
+                    return redirect("/dashboard");
                   }
 
                   const target = new URL(redirectTo, process.env.APP_URL);
                   if (target.origin !== process.env.APP_URL) {
-                    redirect("/dashboard");
+                    return redirect("/dashboard");
                   }
 
-                  redirect(target.pathname);
+                  redirect(target.toString());
                 }
             "#,
     );

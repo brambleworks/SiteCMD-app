@@ -3,6 +3,9 @@ import path from "node:path";
 import { requireCondition, requireText } from "./workflow-contract.mjs";
 import { canonicalJson, digest } from "./workflow-plan.mjs";
 import { validateResult } from "./workflow-results.mjs";
+import { summarizeModelIdentity } from "./workflow-model-identity.mjs";
+import { loadTrialSource } from "./trial-source.mjs";
+import { candidateIdentity, compareCandidate, decodeCandidateRecord } from "./trial-candidate.mjs";
 
 export function artifactPath(root, name, { directory = false } = {}) {
   requireCondition(
@@ -65,6 +68,22 @@ export function collectEvidence(record, assignment, plan, root) {
   };
   const json = (name) => JSON.parse(read(name).toString("utf8"));
   requireCondition(read(record.transcript).length > 0, "transcript is empty");
+  if (record.modelSelection?.receipt !== undefined) {
+    const selection = record.modelSelection;
+    const identity = json(selection.receipt);
+    const configuration = plan.study.configurations.find(
+      (item) => item.id === assignment.configuration,
+    );
+    const expected = summarizeModelIdentity(
+      configuration.agent,
+      selection.requested,
+      read(record.transcript).toString("utf8"),
+      identity.evidenceComplete,
+    );
+    sameEvidence(identity, expected, "model identity");
+    sameEvidence(selection.observed, identity.observed, "observed models");
+    sameEvidence(selection.verified, identity.verified, "model identity verification");
+  }
   if (record.mcp) requireCondition(read(record.mcp.trace).length > 0, "MCP trace is empty");
   const usageReceipt = json(record.usage.receipt);
   const { receipt: usagePath, ...usage } = record.usage;
@@ -77,12 +96,39 @@ export function collectEvidence(record, assignment, plan, root) {
   );
   for (const name of usageReceipt.raw) read(name);
   const task = plan.study.tasks.find((item) => item.id === assignment.task);
+  for (const [field, file] of [
+    ["runtimeSha256", "repository-runtime.json"],
+    ["browserRuntimeSha256", "browser-runtime.json"],
+  ])
+    if (task[field] !== undefined) sameEvidence(digest(json(file)), task[field], `runtime ${file}`);
+  const source = task.sourceFormat ? loadTrialSource(json("source.json"), task) : null;
   for (const submission of record.submissions) {
+    requireCondition(
+      !source || typeof submission.candidate === "string",
+      "repository candidate evidence is required",
+    );
     requireCondition(
       digest(read(submission.patch)) === submission.patchSha256,
       "submitted patch digest does not match its bytes",
     );
     const grade = json(submission.receipt);
+    if (submission.candidate !== undefined) {
+      const snapshot = decodeCandidateRecord(json(submission.candidate));
+      sameEvidence(
+        candidateIdentity(snapshot),
+        submission.snapshotSha256,
+        "candidate snapshot digest",
+      );
+      sameEvidence(grade.snapshotSha256, submission.snapshotSha256, "graded snapshot digest");
+      if (source) {
+        const integrity = compareCandidate(source.files, snapshot.files, snapshot.violations, {
+          editableFiles: source.editableFiles,
+          originalModes: source.modes,
+          candidateModes: snapshot.modes,
+        });
+        sameEvidence(submission.integrityPass, integrity.passed, "repository integrity");
+      }
+    }
     for (const [key, value] of Object.entries({
       trialId: record.trialId,
       studySha256: plan.studySha256,

@@ -8,10 +8,9 @@ pub(in crate::core::code_scan) static DANGEROUS_HTML_PATTERNS: LazyLock<Vec<rege
         vec![
             regex::Regex::new(r"dangerouslySetInnerHTML").expect("static pattern regex"), // allow-expect: compile-time literal regex
             regex::Regex::new(r"v-html").expect("static pattern regex"), // allow-expect: compile-time literal regex
-            // Flag only dynamic innerHTML assignments; static and empty values
-            // are not XSS evidence.
-            regex::Regex::new(r"innerHTML\s*=[^;]*\$\{").expect("static pattern regex"), // allow-expect: compile-time literal regex
-            regex::Regex::new(r"innerHTML\s*=[^;]*\+").expect("static pattern regex"), // allow-expect: compile-time literal regex
+            // Assignment values are classified per occurrence so computed
+            // expressions are reported while complete literals stay quiet.
+            regex::Regex::new(r"\binnerHTML\s*=").expect("static pattern regex"), // allow-expect: compile-time literal regex
             // `Markup(` with a word boundary so Drupal's safe wrappers
             // (TranslatableMarkup, FormattableMarkup, PlaceholderMarkup, …)
             // don't trip the check on every plugin metadata line.

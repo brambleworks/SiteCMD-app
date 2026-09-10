@@ -480,12 +480,18 @@ describe("CodeScanResults behavior", () => {
       fireEvent.click(screen.getByText(issue.title).closest("button")!);
       expect(await screen.findByTestId("code-issue-dossier")).toBeInTheDocument();
 
-      setFixHandoff(fixHandoffKey(7, "https://example.com", issue.checkId), {
-        mode: "handoff",
-        tool: "claude-code",
-        phase: "opened",
-        attemptId: 2,
-      });
+      setFixHandoff(
+        fixHandoffKey(7, "https://example.com", issue.checkId, {
+          path: issue.relativePath,
+          line: issue.line,
+        }),
+        {
+          mode: "handoff",
+          tool: "claude-code",
+          phase: "opened",
+          attemptId: 2,
+        },
+      );
 
       rerender(
         <CodeScanResults result={buildResult({ id: 92, issues: [] })} projectPath="/tmp/project" />,

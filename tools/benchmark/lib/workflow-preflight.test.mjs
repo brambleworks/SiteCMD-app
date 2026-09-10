@@ -38,6 +38,16 @@ test("preflight checks versions and subscription status without launching a mode
     ["claude", ["auth", "status", "--json"]],
   ]);
   assert.equal(result.subscriptionAccountsVerified, true);
+  assert.deepEqual(
+    result.accounts.map(({ agent, models }) => ({ agent, models })),
+    [
+      {
+        agent: "codex",
+        models: ["gpt-5.6-sol", "gpt-6-astra", "gpt-daybreak-blue-latest"],
+      },
+      { agent: "claude", models: ["claude-opus-5"] },
+    ],
+  );
   assert.equal(result.readyToRun, false);
   assert.doesNotMatch(JSON.stringify(result), /not-for-output/);
 });

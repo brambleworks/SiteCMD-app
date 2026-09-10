@@ -8,6 +8,8 @@ import { test } from "node:test";
 import { fixtureStudy, writeFixtureEvidence } from "./workflow-fixture.mjs";
 import { createStudyRun, importTrial, loadResults, appendReview } from "./workflow-store.mjs";
 import { collectEvidence, readArtifact } from "./workflow-artifacts.mjs";
+import { summarizeModelIdentity } from "./workflow-model-identity.mjs";
+import { digest } from "./workflow-plan.mjs";
 
 const CLI = fileURLToPath(new URL("../workflow-benchmark.mjs", import.meta.url));
 const checks = {
@@ -15,11 +17,11 @@ const checks = {
   regressions: { status: 0, log: "fixture regression log\n" },
 };
 
-function workspace(t) {
+function workspace(t, study = fixtureStudy()) {
   const root = mkdtempSync(path.join(tmpdir(), "sitecmd-workflow-test-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const run = path.join(root, "run");
-  const plan = createStudyRun(fixtureStudy(), run);
+  const plan = createStudyRun(study, run);
   const assignment = plan.assignments[0];
   const input = writeFixtureEvidence(path.join(root, "evidence"), plan, assignment, checks);
   return { root, run, plan, assignment, input };
@@ -52,11 +54,128 @@ test("tampered receipts and patch contents are rejected before import", (t) => {
   assert.throws(() => collectEvidence(record, assignment, plan, evidenceRoot), /patch digest/);
 });
 
+test("model identity receipts are imported and checked against the actual transcript", (t) => {
+  const study = fixtureStudy();
+  study.configurations[0].agent = "claude";
+  const { root, run, plan, assignment, input } = workspace(t, study);
+  const record = JSON.parse(readFileSync(input));
+  const evidenceRoot = path.join(root, "evidence");
+  const transcript = [
+    { type: "assistant", message: { id: "fixture-message", model: record.model } },
+    { type: "result", subtype: "success", is_error: false },
+  ]
+    .map((event) => JSON.stringify(event))
+    .join("\n");
+  const identity = summarizeModelIdentity("claude", record.model, transcript, true);
+  record.modelSelection = {
+    requested: record.model,
+    observed: identity.observed,
+    source: "explicit-cli-request",
+    receipt: "model-identity.json",
+    verified: true,
+  };
+  writeFileSync(path.join(evidenceRoot, record.transcript), transcript);
+  writeFileSync(path.join(evidenceRoot, "model-identity.json"), JSON.stringify(identity));
+  writeFileSync(input, JSON.stringify(record));
+  const artifacts = collectEvidence(record, assignment, plan, evidenceRoot);
+  assert.equal(artifacts.has("model-identity.json"), true);
+  importTrial(run, input);
+  assert.equal(loadResults(run)[0].modelSelection.verified, true);
+  identity.observations[0].line = 10;
+  writeFileSync(path.join(evidenceRoot, "model-identity.json"), JSON.stringify(identity));
+  assert.throws(
+    () => collectEvidence(record, assignment, plan, evidenceRoot),
+    /model identity.*receipt/,
+  );
+});
+
+test("repository evidence import verifies captured modes and recomputes integrity", (t) => {
+  const study = fixtureStudy();
+  const content = {
+    schemaVersion: 1,
+    commit: "1".repeat(40),
+    tree: "2".repeat(40),
+    files: [
+      { name: "handler.py", mode: "100644", base64: Buffer.from("before").toString("base64") },
+      { name: "LICENSE", mode: "100644", base64: Buffer.from("license").toString("base64") },
+    ],
+  };
+  const source = { ...content, sha256: digest(content) };
+  study.tasks = [
+    {
+      ...study.tasks[0],
+      sourceFormat: "git-tree-v1",
+      sourceSha256: source.sha256,
+      editableFiles: ["handler.py"],
+    },
+  ];
+  const { root, plan, assignment, input } = workspace(t, study);
+  const directory = path.join(root, "evidence");
+  const record = JSON.parse(readFileSync(input));
+  const submission = record.submissions[0];
+  const candidate = {
+    files: {
+      "handler.py": Buffer.from("after").toString("base64"),
+      LICENSE: content.files[1].base64,
+    },
+    modes: { "handler.py": "100644", LICENSE: "100644" },
+    violations: [],
+  };
+  submission.candidate = "candidate.json";
+  submission.snapshotSha256 = digest(candidate);
+  const grade = JSON.parse(readFileSync(path.join(directory, submission.receipt)));
+  grade.snapshotSha256 = submission.snapshotSha256;
+  const save = () => {
+    writeFileSync(path.join(directory, "source.json"), JSON.stringify(source));
+    writeFileSync(path.join(directory, submission.candidate), JSON.stringify(candidate));
+    writeFileSync(path.join(directory, submission.receipt), JSON.stringify(grade));
+  };
+  save();
+  const artifacts = collectEvidence(record, assignment, plan, directory);
+  assert.equal(artifacts.has("candidate.json"), true);
+  assert.equal(artifacts.has("source.json"), true);
+  candidate.modes["handler.py"] = "100755";
+  save();
+  assert.throws(() => collectEvidence(record, assignment, plan, directory), /snapshot/);
+  submission.snapshotSha256 = digest(candidate);
+  grade.snapshotSha256 = submission.snapshotSha256;
+  save();
+  assert.throws(() => collectEvidence(record, assignment, plan, directory), /integrity/);
+  delete submission.candidate;
+  assert.throws(() => collectEvidence(record, assignment, plan, directory), /candidate/);
+});
+
 test("stored artifacts are rehashed whenever results are loaded", (t) => {
   const { run, assignment, input } = workspace(t);
   importTrial(run, input);
   writeFileSync(path.join(run, "trials", assignment.id, "artifacts", "transcript.txt"), "modified");
   assert.throws(() => loadResults(run), /artifact digests/);
+});
+
+test("runtime receipt import requires the identities frozen in the study", (t) => {
+  const runtime = { fixture: "Python runtime" };
+  const browser = { fixture: "browser runtime" };
+  const study = fixtureStudy();
+  for (const task of study.tasks) {
+    task.runtimeSha256 = digest(runtime);
+    task.browserRuntimeSha256 = digest(browser);
+  }
+  const { root, plan, assignment, input } = workspace(t, study);
+  const directory = path.join(root, "evidence");
+  const record = JSON.parse(readFileSync(input));
+  const files = [
+    ["repository-runtime.json", runtime],
+    ["browser-runtime.json", browser],
+  ];
+  for (const [file, receipt] of files)
+    writeFileSync(path.join(directory, file), JSON.stringify(receipt));
+  for (const [file, receipt] of files) {
+    writeFileSync(path.join(directory, file), JSON.stringify({ changed: true }));
+    assert.throws(() => collectEvidence(record, assignment, plan, directory), /runtime.*receipt/);
+    writeFileSync(path.join(directory, file), JSON.stringify(receipt));
+  }
+  const artifacts = collectEvidence(record, assignment, plan, directory);
+  for (const [file] of files) assert.equal(artifacts.has(file), true);
 });
 
 test("artifact traversal, absolute paths, and symlinks are rejected", (t) => {

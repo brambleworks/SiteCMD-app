@@ -1,18 +1,23 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { digest } from "./lib/workflow-plan.mjs";
-import { evaluateQuota } from "./lib/workflow-quota.mjs";
-import { validatePilotStudy } from "./lib/workflow-pilot.mjs";
+import { evaluateQuota, verifyQuotaUsageContinuity } from "./lib/workflow-quota.mjs";
+import { validateRunnableStudy } from "./lib/workflow-runnable-study.mjs";
 import { loadPlan, loadResults } from "./lib/workflow-store.mjs";
 import { exportGuestTrial } from "./lib/vm-trial-export.mjs";
 import { deployHarness } from "./lib/vm-harness.mjs";
 import { guestCommand, guestProcess } from "./lib/vm-guest.mjs";
+import { verifyContinuation } from "./lib/workflow-continuation.mjs";
+import { loadTrialSource } from "./lib/trial-source.mjs";
+import { buildTrialItem } from "./lib/trial-item.mjs";
+import { verifyControllerAmendment } from "./lib/workflow-controller-amendment.mjs";
 
 const supplied = process.argv[2];
 if (!supplied) throw new Error("Usage: run-next.mjs RUN_DIRECTORY");
 const run = path.resolve(supplied);
 const plan = loadPlan(run);
-validatePilotStudy(plan.study);
+validateRunnableStudy(plan.study);
+verifyContinuation(run, plan);
 const recorded = new Set(loadResults(run, plan).map((record) => record.trialId));
 const assignment = plan.assignments.find((item) => !recorded.has(item.id));
 if (!assignment) {
@@ -34,8 +39,8 @@ try {
 if (readFileSync(baselineHashFile, "utf8") !== digest(baseline))
   throw new Error("The original quota baseline changed; do not rebase the approved allowance");
 const harness = deployHarness();
-if (harness.id !== plan.study.runnerSha256)
-  throw new Error("Runner changed after registration; prepare a new study before any trials");
+const controllerAmendment =
+  harness.id === plan.study.runnerSha256 ? null : verifyControllerAmendment(run, plan, harness);
 const corpus = JSON.parse(readFileSync(path.join(run, "inputs", "corpus.json")));
 if (digest(corpus) !== plan.study.corpusSha256) throw new Error("Frozen corpus changed");
 const item = corpus.find((item) => item.id === assignment.task);
@@ -43,8 +48,14 @@ const product = JSON.parse(readFileSync(path.join(run, "inputs", "product.json")
 if (digest(product) !== plan.study.productSha256) throw new Error("Frozen product receipt changed");
 const report = readFileSync(path.join(run, "inputs", `${assignment.task}-report.json`), "utf8");
 const task = plan.study.tasks.find((task) => task.id === assignment.task);
-if (digest(report) !== task.reportSha256 || digest(item.baselineFiles) !== task.sourceSha256)
-  throw new Error("Frozen input changed");
+loadTrialSource(item.baselineFiles, task);
+if (digest(report) !== task.reportSha256) throw new Error("Frozen input changed");
+for (const [field, input] of [
+  ["runtimeSha256", "repositoryRuntime"],
+  ["browserRuntimeSha256", "browserRuntime"],
+])
+  if (task[field] !== undefined && digest(item[input]) !== task[field])
+    throw new Error("Frozen repository runtime changed");
 console.log(
   `Running ${assignment.task}, ${assignment.configuration}, ${assignment.arm}. Update quota-current.json from real readings before it becomes five minutes old.`,
 );
@@ -60,18 +71,13 @@ const child = guestProcess(
   JSON.stringify({
     plan,
     assignment,
-    item: {
-      id: item.id,
-      entry: item.entry,
-      runtime: item.runtime,
-      rule: item.rule,
-      kind: item.kind,
-    },
+    item: buildTrialItem(item, task),
     files: item.baselineFiles,
     product,
     report,
     baseline,
     current,
+    controllerAmendment,
   }),
 );
 let output = "";
@@ -80,7 +86,8 @@ child.stdout.on("data", (chunk) => {
   if (output.length > 1024 * 1024) child.kill("SIGTERM");
 });
 child.stderr.pipe(process.stderr);
-let previous = digest(current);
+let previousSnapshot = current;
+let previous = digest(previousSnapshot);
 let syncing = false;
 const timer = setInterval(() => {
   if (syncing) return;
@@ -89,6 +96,7 @@ const timer = setInterval(() => {
     const snapshot = JSON.parse(readFileSync(currentPath));
     if (digest(snapshot) !== previous) {
       evaluateQuota(baseline, snapshot, plan.study.billing);
+      verifyQuotaUsageContinuity(baseline, previousSnapshot, snapshot);
       guestCommand(["sudo", "node", `${harness.directory}/update-quota.mjs`], {
         input: JSON.stringify({
           directory: `/srv/sitecmd-benchmark/trials/${assignment.id}`,
@@ -97,6 +105,7 @@ const timer = setInterval(() => {
         }),
         capture: true,
       });
+      previousSnapshot = snapshot;
       previous = digest(snapshot);
     }
   } catch (error) {

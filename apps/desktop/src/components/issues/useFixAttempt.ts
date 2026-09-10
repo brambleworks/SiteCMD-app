@@ -30,11 +30,15 @@ export function useFixAttempt({
   envUrl,
   checkId,
   title,
+  targetRelativePath,
+  targetLine,
 }: {
   projectId: number | null | undefined;
   envUrl: string | null | undefined;
   checkId: string;
   title: string;
+  targetRelativePath?: string;
+  targetLine?: number | null;
 }): {
   attempt: FixAttempt | null;
   setAttempt: (a: FixAttempt | null) => void;
@@ -69,7 +73,13 @@ export function useFixAttempt({
     const seq = ++fetchSeqRef.current;
     let next: FixAttempt | null;
     try {
-      next = await getFixAttemptForIssue(projectId, envUrl, checkId, title);
+      next = await getFixAttemptForIssue(
+        projectId,
+        envUrl,
+        checkId,
+        title,
+        targetRelativePath ? { path: targetRelativePath, line: targetLine ?? null } : undefined,
+      );
     } catch {
       // Keep the last known attempt on a transient fetch failure; the event
       // listener or poll will retry.
@@ -79,7 +89,7 @@ export function useFixAttempt({
     // The safety poll mostly returns an unchanged row; skip the no-op update.
     if (sameAttempt(attemptRef.current, next)) return;
     applyAttempt(next);
-  }, [projectId, envUrl, checkId, title, applyAttempt]);
+  }, [projectId, envUrl, checkId, title, targetRelativePath, targetLine, applyAttempt]);
 
   // Prevent an in-flight refetch from overwriting a newly created attempt.
   const setAttempt = useCallback(

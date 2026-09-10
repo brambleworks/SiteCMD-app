@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { validateStudy } from "./workflow-contract.mjs";
+import { requireCondition, requireHash, requireText, validateStudy } from "./workflow-contract.mjs";
 
 export function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -49,13 +49,50 @@ export function createPlan(study) {
       }
     }
   }
-  const assignments = shuffled(blocks, random).flatMap((block) =>
+  let assignments = shuffled(blocks, random).flatMap((block) =>
     shuffled(study.arms, random).map((arm) => ({
       id: digest({ studySha256, ...block, arm }).slice(0, 24),
       ...block,
       arm,
     })),
   );
+  if (study.continuation) {
+    const continuation = study.continuation;
+    requireCondition(
+      study.phase !== "confirmatory",
+      "continuations cannot support confirmatory claims",
+    );
+    requireText(continuation.sourceRun, "continuation source run");
+    requireText(continuation.reason, "continuation reason");
+    requireHash(continuation.sourceStudySha256, "source study digest");
+    requireHash(continuation.baselineSha256, "original allowance digest");
+    requireCondition(
+      Array.isArray(continuation.retained) &&
+        continuation.retained.length > 0 &&
+        continuation.retained.length < assignments.length,
+      "continuation must retain a nonempty executed prefix",
+    );
+    for (const [index, record] of continuation.retained.entries()) {
+      const { id: _id, ...assignment } = assignments[index];
+      const origin = record.studySha256 ?? continuation.sourceStudySha256;
+      requireHash(origin, "retained study digest");
+      const expectedId = digest({
+        studySha256: origin,
+        ...assignment,
+      }).slice(0, 24);
+      requireCondition(
+        canonicalJson({
+          ...assignment,
+          trialId: expectedId,
+          recordSha256: record.recordSha256,
+          ...(record.studySha256 ? { studySha256: record.studySha256 } : {}),
+        }) === canonicalJson(record),
+        "continuation must retain every executed assignment in order",
+      );
+      requireHash(record.recordSha256, "retained record digest");
+    }
+    assignments = assignments.slice(continuation.retained.length);
+  }
   return {
     schemaVersion: 1,
     study,

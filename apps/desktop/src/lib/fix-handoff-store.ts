@@ -1,4 +1,4 @@
-import type { AgentTool } from "@/lib/fix-attempts";
+import type { AgentTool, FixAttemptOccurrence } from "@/lib/fix-attempts";
 
 /** Launch state; `manual` means the prompt was copied without launching a tool. */
 export type HandoffPhase = "preparing" | "launching" | "opened" | "launch_failed" | "manual";
@@ -19,8 +19,14 @@ function emit(): void {
   for (const listener of listeners) listener();
 }
 
-export function fixHandoffKey(projectId: number, envUrl: string, checkId: string): string {
-  return `${projectId}:${envUrl}:${checkId}`;
+export function fixHandoffKey(
+  projectId: number,
+  envUrl: string,
+  checkId: string,
+  occurrence?: FixAttemptOccurrence,
+): string {
+  const target = occurrence ? `:${JSON.stringify([occurrence.path, occurrence.line])}` : "";
+  return `${projectId}:${envUrl}:${checkId}${target}`;
 }
 
 export function getFixHandoff(key: string): FixHandoffState | null {

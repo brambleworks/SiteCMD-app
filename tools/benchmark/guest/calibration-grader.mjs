@@ -51,6 +51,18 @@ export function gradeCase(item, candidate, execute = executeCandidate) {
       "/\\evil.example",
       "javascript:alert(1)",
       "\\\\evil.example",
+      "https://app.example.com/settings",
+      "//app.example.com/settings",
+      "/\\app.example.com/settings",
+      "settings",
+      " /settings",
+      "",
+      ...["\t", "\n", "\r"].flatMap((control) => [
+        `${control}/settings`,
+        `/${control}/app.example.com/settings`,
+        `/${control}\\app.example.com/settings`,
+        `/${control}/evil.example/landing`,
+      ]),
     ])
       check(
         "acceptance",
@@ -58,12 +70,20 @@ export function gradeCase(item, candidate, execute = executeCandidate) {
         response(next),
         (out) => out.status === 302 && out.headers.location === "https://app.example.com/dashboard",
       );
-    for (const next of ["/settings", "/reports?year=2026#total", "/dashboard"])
+    for (const [next, destination] of [
+      ["/settings", "/settings"],
+      ["/reports?year=2026#total", "/reports?year=2026#total"],
+      ["/dashboard", "/dashboard"],
+      ["/.//evil.example/landing?x=1#section", "//evil.example/landing?x=1#section"],
+      ["/%2e//evil.example/landing", "//evil.example/landing"],
+      ["/a/..//evil.example/landing", "//evil.example/landing"],
+    ])
       check(
         "regressions",
         `Preserve destination ${next}`,
         response(next),
-        (out) => out.status === 302 && out.headers.location === `https://app.example.com${next}`,
+        (out) =>
+          out.status === 302 && out.headers.location === `https://app.example.com${destination}`,
       );
     check(
       "regressions",
@@ -82,22 +102,26 @@ export function gradeCase(item, candidate, execute = executeCandidate) {
       "nested/../../outside.txt",
       "/tmp/outside.txt",
       "escape",
+      "nested",
+      "pipe",
     ])
       check("acceptance", `Reject document ${supplied}`, input(supplied), (out) =>
         ["ValueError", "PermissionError"].includes(out.error),
       );
-    check(
-      "regressions",
-      "Read document",
-      input("readme.txt"),
-      (out) => out.result === "Example document 726",
-    );
-    check(
-      "regressions",
-      "Read nested document",
-      input("nested/guide.txt"),
-      (out) => out.result === "Example document 726 nested",
-    );
+    for (const [name, suffix, root] of [
+      ["readme.txt", ""],
+      ["nested/guide.txt", " nested"],
+      ["notes\\draft.txt", ""],
+      ["C:notes.txt", ""],
+      ["inside", ""],
+      ["tmp/documents/readme.txt", "", "/"],
+    ])
+      check(
+        "regressions",
+        `Read document ${name}${root ? " with filesystem root" : ""}`,
+        { ...input(name), ...(root ? { root } : {}) },
+        (out) => out.result === `Example document 726${suffix}`,
+      );
     check(
       "regressions",
       "Missing document",

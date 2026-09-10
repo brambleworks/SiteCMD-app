@@ -42,6 +42,8 @@ export interface BriefLocation {
   reason: string;
 }
 
+export type FixAttemptOccurrence = Pick<BriefLocation, "path" | "line">;
+
 export interface AgentToolStatus {
   tool: AgentTool;
   installed: boolean;
@@ -108,12 +110,14 @@ export function getFixAttemptForIssue(
   envUrl: string,
   checkId: string,
   title: string,
+  occurrence?: FixAttemptOccurrence,
 ): Promise<FixAttempt | null> {
   return getFixAttemptForIssueCmd({
     projectId,
     envUrl,
     checkId,
     title,
+    ...(occurrence ? { targetRelativePath: occurrence.path, targetLine: occurrence.line } : {}),
   }) as Promise<FixAttempt | null>;
 }
 

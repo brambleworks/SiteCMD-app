@@ -102,6 +102,14 @@ def fetch(url):
     return requests.get(url, verify=False)
             "#,
     );
+    write_file(
+        temp.path(),
+        "sagemaker/serve/model_server/triton/model.py",
+        r#"import ssl
+
+ssl._create_default_https_context = ssl._create_unverified_context
+"#,
+    );
 
     let report = audit_project(temp.path()).unwrap();
     let flagged: Vec<&str> = report
@@ -112,6 +120,7 @@ def fetch(url):
         .collect();
     assert!(flagged.contains(&"lib/insecure-agent.ts"));
     assert!(flagged.contains(&"scripts/sync.py"));
+    assert!(flagged.contains(&"sagemaker/serve/model_server/triton/model.py"));
     let issue = report
         .issues
         .iter()

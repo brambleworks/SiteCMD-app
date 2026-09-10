@@ -141,3 +141,45 @@ describe("commit-message policy wiring", () => {
     );
   });
 });
+
+describe("dependency bot titles", () => {
+  // The title that failed the guardrail on pull request 47. Dependabot appends
+  // "in the <group> group" when a grouped update carries a single dependency,
+  // and offers no way to shorten it.
+  const GROUPED_SINGLE =
+    "Bump taiki-e/install-action from 2.87.0 to 2.87.5 in the github-actions group";
+
+  it.each([
+    GROUPED_SINGLE,
+    "Bump actions/checkout from 4.2.2 to 5.0.0",
+    "Bump the github-actions group with 5 updates",
+    "Bump the github-actions group with 1 update",
+    "Bump the github-actions group across 1 directory with 5 updates",
+  ])("accepts the machine-written title %s", (subject) => {
+    expect(commitMessageFailures(subject, { subjectOnly: true })).toEqual([]);
+  });
+
+  it("relaxes the length allowance only, and only for these shapes", () => {
+    expect(GROUPED_SINGLE.length).toBeGreaterThan(60);
+    // A human subject of the same length is still held to the cap.
+    const human = "Bump the release manifest and the updater signature together again";
+    expect(human.length).toBeGreaterThan(60);
+    expect(commitMessageFailures(human, { subjectOnly: true })).toContain(
+      "Keep the subject at 60 characters or fewer.",
+    );
+  });
+
+  it.each([
+    [
+      "bump taiki-e/install-action from 2.87.0 to 2.87.5",
+      "Start the subject with a capitalized imperative verb.",
+    ],
+    [
+      "chore(deps): Bump actions/checkout from 4.2.2 to 5.0.0",
+      "Remove the Conventional Commit prefix.",
+    ],
+    ["Bump actions/checkout from 4.2.2 to 5.0.0.", "Do not end the subject with punctuation."],
+  ])("still applies every other rule to %s", (subject, failure) => {
+    expect(commitMessageFailures(subject, { subjectOnly: true })).toContain(failure);
+  });
+});

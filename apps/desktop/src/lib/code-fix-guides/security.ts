@@ -118,7 +118,7 @@ export const SECURITY_FIX_GUIDES: Record<string, CodeFixGuideEntry> = {
     effortMinutes: 10,
     lead: "Raw HTML from an untrusted source is rendered directly onto the page without being sanitized first.",
     default: [
-      "Remove raw HTML rendering when structured components or text are sufficient. When the feature genuinely accepts HTML, including rendered Markdown, sanitize at the final rendering boundary with a maintained allowlist sanitizer such as DOMPurify, `sanitize-html`, or `rehype-sanitize`, and test event handlers, `javascript:` URLs, and malformed markup.",
+      "Trace the exact value at the reported sink and fix its untrusted branch without removing other valid output. Prefer structured text for error messages. If the same sink also renders trusted generated markup such as an SVG preview, preserve that path and sanitize only attacker-influenced HTML at the final boundary. Use a maintained allowlist sanitizer such as DOMPurify, `sanitize-html`, or `rehype-sanitize`, configure it for the markup the feature requires, and test both legitimate output and hostile event handlers, `javascript:` URLs, and malformed markup.",
     ],
   },
   "upload-key-scope": {
@@ -390,7 +390,8 @@ export const SECURITY_FIX_GUIDES: Record<string, CodeFixGuideEntry> = {
     effortMinutes: 15,
     lead: "A file path is built from user input with too little restriction, potentially letting a request reach files outside its folder.",
     default: [
-      "Prefer an opaque server-side object id or a maintained bounded-serving helper with a fixed trusted root; basename or `secure_filename` removes path syntax but does not authorize which in-root file a caller may access. For direct access, resolve base and target with `pathlib`, require component-aware containment such as `is_relative_to` rather than a string-prefix check, and test with canaries in an isolated temporary root.",
+      "Prefer an opaque server-side object id or a maintained bounded-serving helper with a fixed trusted root. A basename helper or `secure_filename` removes path syntax but does not authorize in-root access. For direct access, resolve the base and target with `pathlib`, require component-aware containment such as `is_relative_to`, and test with isolated canaries.",
+      "For a persisted name, define the accepted grammar and reject noncanonical values rather than silently rewriting them. Rewriting can alias distinct inputs and break stored-name compatibility.",
     ],
   },
   "js-command-injection": {

@@ -80,6 +80,10 @@ static MIGRATIONS: &[(u32, &str)] = &[
         28,
         include_str!("migrations/028_remove_inferred_update_events.sql"),
     ),
+    (
+        29,
+        include_str!("migrations/029_fix_attempt_occurrence_targets.sql"),
+    ),
 ];
 
 pub(crate) const UNIFIED_SCAN_CUTOVER_VERSION: u32 = 13;

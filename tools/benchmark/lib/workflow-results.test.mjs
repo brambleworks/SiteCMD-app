@@ -25,6 +25,99 @@ test("fixture runs never become confirmatory evidence and negative controls are 
   assert.match(renderWorkflowReport(plan, analysis), /Not ready for marketing claims/);
 });
 
+test("legacy model labels cannot produce confirmatory claims without response receipts", () => {
+  const study = fixtureStudy();
+  Object.assign(study, {
+    phase: "confirmatory",
+    registration: "Synthetic registration",
+    sampleSizeRationale: "Test only",
+  });
+  study.sitecmd.dirty = false;
+  study.tasks.forEach((task) => {
+    task.holdout = true;
+  });
+  const plan = createPlan(study);
+  const records = plan.assignments.map((assignment) => ({
+    ...fixtureRecord(plan, assignment),
+    fixture: false,
+  }));
+  assert.equal(analyze(plan, records).claimReviewReady, false);
+  for (const record of records) {
+    record.modelSelection = {
+      requested: record.model,
+      observed: [record.model],
+      source: "explicit-cli-request",
+    };
+  }
+  assert.equal(analyze(plan, records).claimReviewReady, false);
+  for (const record of records) {
+    Object.assign(record.modelSelection, { receipt: "model-identity.json", verified: true });
+  }
+  assert.equal(analyze(plan, records).claimReviewReady, true);
+  records[0].modelSelection.verified = false;
+  assert.equal(analyze(plan, records).claimReviewReady, false);
+});
+
+test("a completed strict Codex selection can be claim-ready without provider response metadata", () => {
+  const study = fixtureStudy();
+  Object.assign(study, {
+    phase: "confirmatory",
+    registration: "Synthetic registration",
+    sampleSizeRationale: "Test only",
+  });
+  study.sitecmd.dirty = false;
+  study.configurations[0].agent = "codex";
+  study.tasks.forEach((task) => {
+    task.holdout = true;
+  });
+  const plan = createPlan(study);
+  const records = plan.assignments.map((assignment) => {
+    const record = { ...fixtureRecord(plan, assignment), fixture: false, model: null };
+    record.modelSelection = {
+      requested: "no-model",
+      observed: [],
+      source: "explicit-cli-request",
+      receipt: "model-identity.json",
+      assurance: "explicit-cli-selection",
+      verified: true,
+    };
+    return record;
+  });
+  assert.equal(analyze(plan, records).claimReviewReady, true);
+});
+
+test("an invalidated study can never become claim-ready", () => {
+  const study = fixtureStudy();
+  Object.assign(study, {
+    id: "sitecmd-repository-confirmatory-v1",
+    phase: "confirmatory",
+    registration: "Retired registration",
+    sampleSizeRationale: "Historical design only",
+  });
+  study.sitecmd.dirty = false;
+  study.configurations[0].agent = "codex";
+  study.tasks.forEach((task) => {
+    task.holdout = true;
+  });
+  const plan = createPlan(study);
+  const records = plan.assignments.map((assignment) => {
+    const record = { ...fixtureRecord(plan, assignment), fixture: false, model: null };
+    record.modelSelection = {
+      requested: "no-model",
+      observed: [],
+      source: "explicit-cli-request",
+      receipt: "model-identity.json",
+      assurance: "explicit-cli-selection",
+      verified: true,
+    };
+    return record;
+  });
+
+  const analysis = analyze(plan, records);
+  assert.equal(analysis.claimReviewReady, false);
+  assert.match(analysis.blockers.join("\n"), /invalidated|diagnostic/i);
+});
+
 test("missing assignments withhold rates and spending estimates", () => {
   const { plan, records } = setup();
   const missing = records.findIndex(
@@ -147,4 +240,35 @@ test("baseline MCP contamination and mixed cost bases are flagged", () => {
   delete record.mcp;
   record.usage.costBasis = "billed";
   assert.ok(analyze(plan, records).blockers.some((blocker) => blocker.includes("costs are mixed")));
+});
+
+test("a preregistered fixed model mixture is pooled without hiding per-model groups", () => {
+  const study = fixtureStudy();
+  study.analysis = { configurationAggregation: "equal-weight-fixed-requested-set" };
+  study.configurations.push({
+    ...study.configurations[0],
+    id: "fixture-two",
+    model: "no-model-two",
+  });
+  const plan = createPlan(study);
+  const records = plan.assignments.map((assignment) => {
+    const record = fixtureRecord(plan, assignment);
+    const configuration = study.configurations.find((item) => item.id === assignment.configuration);
+    record.model = configuration.model;
+    record.agentVersion = configuration.agentVersion;
+    return record;
+  });
+  const analysis = analyze(plan, records);
+  const pooled = analysis.groups.find(
+    (group) => group.configuration === "pooled-fixed-configurations" && group.kind === "repair",
+  );
+  assert.ok(pooled);
+  assert.equal(pooled.arms.normal.assigned, 4);
+  assert.equal(
+    analysis.groups.filter((group) => group.kind === "repair" && !group.pooled).length,
+    2,
+  );
+  const report = renderWorkflowReport(plan, analysis);
+  assert.match(report, /equal-weight average across the fixed requested configurations/);
+  assert.match(report, /Per-configuration results remain separate/);
 });

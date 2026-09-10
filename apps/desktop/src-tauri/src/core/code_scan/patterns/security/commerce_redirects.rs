@@ -127,10 +127,6 @@ pub(in crate::core::code_scan) static REDIRECT_ALLOWLIST_PATTERNS: LazyLock<Vec<
             regex::Regex::new(r"\btrustedRedirect").unwrap(),
             regex::Regex::new(r"\ballowedOrigins?\b").unwrap(),
             regex::Regex::new(r"\btrustedOrigins?\b").unwrap(),
-            regex::Regex::new(r#"\.startsWith\s*\(\s*["'`]/"#).unwrap(),
-            regex::Regex::new(r"\.origin\b").unwrap(),
-            regex::Regex::new(r"\.hostname\b").unwrap(),
-            regex::Regex::new(r"\.host\b").unwrap(),
             // WordPress's allowlist-validating redirect helpers.
             regex::Regex::new(r"\bwp_safe_redirect\s*\(").expect("static PHP pattern regex"), // allow-expect: compile-time literal regex
             regex::Regex::new(r"\bwp_validate_redirect\s*\(").expect("static PHP pattern regex"), // allow-expect: compile-time literal regex

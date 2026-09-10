@@ -10,6 +10,8 @@ export function getFixAttemptForIssue(args: {
   envUrl?: string | null;
   checkId: string;
   title: string;
+  targetRelativePath?: string | null;
+  targetLine?: number | null;
 }): Promise<FixAttemptDto | null> {
   return command<FixAttemptDto | null>("get_fix_attempt_for_issue", args);
 }

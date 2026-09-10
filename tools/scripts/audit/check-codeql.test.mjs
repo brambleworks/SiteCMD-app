@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const SCRIPT = path.join(ROOT, "tools/scripts/audit/check-codeql.mjs");
 const WORK_PREFIX = "sitecmd-codeql-";
+const INTEGRATION_TEST_TIMEOUT_MS = 15_000;
 
 let scratch;
 let fakeBin;
@@ -140,33 +141,45 @@ afterEach(() => {
 });
 
 describe("check-codeql stale database sweep", () => {
-  it("removes an abandoned database even when there is nothing to analyze", () => {
-    const abandoned = seedWorkDirectory(`${WORK_PREFIX}999999-abandoned`);
+  it(
+    "removes an abandoned database even when there is nothing to analyze",
+    () => {
+      const abandoned = seedWorkDirectory(`${WORK_PREFIX}999999-abandoned`);
 
-    const result = runGate();
+      const result = runGate();
 
-    expect(result.stdout).toContain("no added lines");
-    expect(fs.existsSync(abandoned)).toBe(false);
-  });
+      expect(result.stdout).toContain("no added lines");
+      expect(fs.existsSync(abandoned)).toBe(false);
+    },
+    INTEGRATION_TEST_TIMEOUT_MS,
+  );
 
-  it("keeps a directory whose owner is still running, however old it looks", () => {
-    // CodeQL writes below work/db, so a live run's parent mtime stops advancing
-    // and the age test alone would eventually mistake it for abandoned work.
-    const live = seedWorkDirectory(`${WORK_PREFIX}${process.pid}-live`);
+  it(
+    "keeps a directory whose owner is still running, however old it looks",
+    () => {
+      // CodeQL writes below work/db, so a live run's parent mtime stops advancing
+      // and the age test alone would eventually mistake it for abandoned work.
+      const live = seedWorkDirectory(`${WORK_PREFIX}${process.pid}-live`);
 
-    runGate();
+      runGate();
 
-    expect(fs.existsSync(live)).toBe(true);
-  });
+      expect(fs.existsSync(live)).toBe(true);
+    },
+    INTEGRATION_TEST_TIMEOUT_MS,
+  );
 
-  it("leaves a recent directory alone", () => {
-    const directory = path.join(scratch, `${WORK_PREFIX}999999-recent`);
-    fs.mkdirSync(directory, { recursive: true });
+  it(
+    "leaves a recent directory alone",
+    () => {
+      const directory = path.join(scratch, `${WORK_PREFIX}999999-recent`);
+      fs.mkdirSync(directory, { recursive: true });
 
-    runGate();
+      runGate();
 
-    expect(fs.existsSync(directory)).toBe(true);
-  });
+      expect(fs.existsSync(directory)).toBe(true);
+    },
+    INTEGRATION_TEST_TIMEOUT_MS,
+  );
 });
 
 describe("check-codeql analysis root", () => {

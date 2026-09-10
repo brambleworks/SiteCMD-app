@@ -11,8 +11,6 @@ on:
 
 permissions:
   contents: read
-  # Required to enumerate pull request commits, including Dependabot runs.
-  pull-requests: read
 
 concurrency:
   group: gitleaks-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -29,9 +27,41 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Run gitleaks
-        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3
+      # The gitleaks scanner is free software; only the gitleaks-action wrapper
+      # demands a license once a repository is organization-owned. Running the
+      # released binary directly keeps CI on the exact build developers run
+      # locally (brew gitleaks), with no license and no third-party action.
+      - name: Install gitleaks
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Keep the hosted scanner aligned with the local push gate.
+          # Bump together with local installs and the checksum, which is the
+          # linux_x64 line of the release's gitleaks_<version>_checksums.txt.
           GITLEAKS_VERSION: "8.30.1"
+          GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+        run: |
+          set -euo pipefail
+          curl --silent --show-error --fail --location --retry 3 \
+            --output gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum --check --strict
+          tar -xzf gitleaks.tar.gz gitleaks
+          mkdir -p "${RUNNER_TEMP}/bin"
+          install -m 0755 gitleaks "${RUNNER_TEMP}/bin/gitleaks"
+          rm -f gitleaks gitleaks.tar.gz
+          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+          "${RUNNER_TEMP}/bin/gitleaks" version
+
+      # Scan exactly the commits this event introduced, the way the local push
+      # gate scans origin/main..HEAD. A manual run, or a push whose previous
+      # tip is unknown, scans everything reachable from the head instead.
+      - name: Scan commits for secrets
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "${BASE_SHA}" ] && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            range="${BASE_SHA}..${HEAD_SHA}"
+          else
+            range="${HEAD_SHA}"
+          fi
+          gitleaks git --redact --no-banner --config=.gitleaks.toml --log-opts="${range}"

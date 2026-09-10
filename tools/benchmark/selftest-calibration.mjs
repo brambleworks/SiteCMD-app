@@ -11,6 +11,21 @@ import { digest } from "./lib/workflow-plan.mjs";
 import { exportGuestTrial } from "./lib/vm-trial-export.mjs";
 
 const harness = deployHarness();
+for (const name of ["write-staging-selftest.mjs", "sandbox-selftest.mjs"]) {
+  console.log(
+    guestCommand(
+      [
+        "sudo",
+        "flock",
+        "-n",
+        "/run/sitecmd-benchmark-execution.lock",
+        "node",
+        `${harness.directory}/${name}`,
+      ],
+      { capture: true, timeout: 90000 },
+    ),
+  );
+}
 const item = calibrationCases.find((item) => item.id === "credentialed-cors");
 for (const mode of ["repair", "timeout"]) {
   const study = fixtureStudy();

@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   closeSync,
   constants,
   fstatSync,
@@ -11,12 +12,16 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { validateCandidateFiles } from "../lib/trial-candidate.mjs";
+export { candidateRecord, candidateIdentity, compareCandidate } from "../lib/trial-candidate.mjs";
 
 export function readCandidate(directory) {
-  const files = {};
+  const files = Object.create(null);
+  const modes = Object.create(null);
   const violations = [];
   let bytes = 0;
   let entries = 0;
+  let fileEntries = 0;
   const walk = (relative) => {
     const listing = readdirSync(path.join(directory, relative), { withFileTypes: true });
     for (const entry of listing.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
@@ -24,7 +29,7 @@ export function readCandidate(directory) {
       if (!relative && name === ".git") continue;
       const key = path.join(relative, name);
       const file = path.join(directory, key);
-      if (++entries > 1000) throw new Error("Candidate exceeds 1000 entries");
+      if (++entries > 5000) throw new Error("Candidate exceeds 5000 filesystem entries");
       if (entry.isSymbolicLink()) {
         violations.push(`Symlink ${key}: ${readlinkSync(file)}`);
         continue;
@@ -33,10 +38,12 @@ export function readCandidate(directory) {
         walk(key);
         continue;
       }
-      // Refuse to follow a link on the way in, then judge and read the
-      // descriptor itself, so a path swapped after the listing cannot redirect
-      // the read or change the bytes behind the size limit.
-      const handle = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+      if (++fileEntries > 1000) throw new Error("Candidate exceeds 1000 files");
+      // Read a no-follow descriptor so a swapped leaf cannot redirect capture.
+      const handle = openSync(
+        file,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      );
       try {
         const opened = fstatSync(handle);
         if (!opened.isFile() || opened.nlink > 1) {
@@ -47,51 +54,37 @@ export function readCandidate(directory) {
         if (opened.size > 4 * 1024 * 1024 || bytes > 16 * 1024 * 1024)
           throw new Error("Candidate exceeds snapshot byte limits");
         files[key] = readFileSync(handle);
+        modes[key] = opened.mode & 0o111 ? "100755" : "100644";
       } finally {
         closeSync(handle);
       }
     }
   };
   walk("");
-  return { files, violations };
+  return { files, modes, violations };
 }
 
-export function compareCandidate(original, candidate, violations = []) {
-  const reasons = [...violations];
-  for (const [name, contents] of Object.entries(original)) {
-    if (
-      /(?:^|\/)(?:README\.md|package\.json|.*\.test\.[cm]?js|test_.*\.py)$/.test(name) &&
-      !Buffer.from(contents).equals(candidate[name] ?? Buffer.alloc(0))
-    )
-      reasons.push(`Protected contract or test changed: ${name}`);
-  }
-  for (const name of Object.keys(candidate)) {
-    if (
-      name.split("/").some((part) => part.startsWith(".")) ||
-      /(?:^|\/)(?:AGENTS\.md|CLAUDE\.md)$/.test(name)
-    )
-      reasons.push(`Agent configuration or hidden path added: ${name}`);
-  }
-  return {
-    passed: reasons.length === 0,
-    reason:
-      reasons.join("; ") ||
-      "No test, contract, suppression, link, or agent-configuration tampering detected",
-  };
-}
-
-export function materialize(directory, files) {
+export function materialize(directory, files, modes = {}) {
+  validateCandidateFiles(files, modes);
   mkdirSync(directory, { recursive: true, mode: 0o755 });
   for (const [name, contents] of Object.entries(files)) {
     const target = path.join(directory, name);
     mkdirSync(path.dirname(target), { recursive: true, mode: 0o755 });
-    writeFileSync(target, contents, { flag: "wx", mode: 0o644 });
+    const mode = Object.hasOwn(modes, name) ? modes[name] : "100644";
+    const permissions = mode === "100755" ? 0o755 : 0o644;
+    writeFileSync(target, contents, { flag: "wx", mode: permissions });
+    chmodSync(target, permissions);
   }
 }
 
-export function candidatePatch(directory, original, candidate) {
-  materialize(path.join(directory, "original"), original);
-  materialize(path.join(directory, "candidate"), candidate);
+export function candidatePatch(
+  directory,
+  original,
+  candidate,
+  { originalModes, candidateModes } = {},
+) {
+  materialize(path.join(directory, "original"), original, originalModes);
+  materialize(path.join(directory, "candidate"), candidate, candidateModes);
   const result = spawnSync(
     "git",
     [

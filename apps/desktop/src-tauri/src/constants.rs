@@ -160,6 +160,12 @@ pub const MAX_DEPENDENCY_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Cumulative retained source and configuration text admitted by one Code Scan.
 pub const CODE_SCAN_MAX_TEXT_BYTES: u64 = 64_000_000;
+/// Maximum redirect destinations considered by local guard recognition.
+pub const CODE_SCAN_REDIRECT_MAX_TARGETS: usize = 32;
+/// Maximum binding hops followed by local redirect guard recognition.
+pub const CODE_SCAN_REDIRECT_MAX_DEPTH: usize = 6;
+/// Maximum redirect argument span accepted by local guard recognition.
+pub const CODE_SCAN_REDIRECT_ARGUMENT_BYTES: usize = 512;
 /// Maximum `.sitecmd/config.json` size accepted by CLI and deep-link imports.
 pub const MAX_CLI_CONFIG_BYTES: u64 = 64 * 1024;
 /// Maximum `.sitecmd/last-scan.json` size accepted by CLI and deep-link imports.

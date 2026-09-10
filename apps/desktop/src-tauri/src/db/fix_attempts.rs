@@ -38,6 +38,7 @@ pub struct FixAttemptRow {
     pub target_kind: String,
     pub target_relative_path: Option<String>,
     pub target_line: Option<u32>,
+    pub target_occurrence_count: Option<u32>,
     pub agent_tool: String,
     pub status: String,
     pub brief_md: String,
@@ -51,7 +52,7 @@ pub struct FixAttemptRow {
 }
 
 const FIX_ATTEMPT_COLUMNS: &str = "id, project_id, env_url, check_id, producer_rule,
-     target_kind, target_relative_path, target_line, agent_tool, status,
+     target_kind, target_relative_path, target_line, target_occurrence_count, agent_tool, status,
      brief_md, agent_summary, failure_detail, verify_started_at, brief_fetched_at,
      created_at, updated_at";
 
@@ -65,15 +66,16 @@ fn row_to_attempt(row: &Row) -> rusqlite::Result<FixAttemptRow> {
         target_kind: row.get(5)?,
         target_relative_path: row.get(6)?,
         target_line: row.get(7)?,
-        agent_tool: row.get(8)?,
-        status: row.get(9)?,
-        brief_md: row.get(10)?,
-        agent_summary: row.get(11)?,
-        failure_detail: row.get(12)?,
-        verify_started_at: row.get(13)?,
-        brief_fetched_at: row.get(14)?,
-        created_at: row.get(15)?,
-        updated_at: row.get(16)?,
+        target_occurrence_count: row.get(8)?,
+        agent_tool: row.get(9)?,
+        status: row.get(10)?,
+        brief_md: row.get(11)?,
+        agent_summary: row.get(12)?,
+        failure_detail: row.get(13)?,
+        verify_started_at: row.get(14)?,
+        brief_fetched_at: row.get(15)?,
+        created_at: row.get(16)?,
+        updated_at: row.get(17)?,
     })
 }
 
@@ -211,13 +213,33 @@ impl Database {
                 }
                 None => None,
             };
+            let target_occurrence_count = if target_kind == "occurrence" {
+                let count = tx.query_row(
+                    "SELECT COUNT(*) FROM work_items
+                     WHERE project_id = ?1 AND env_url = ?2 AND check_id = ?3
+                       AND source = 'code_scan' AND relative_path = ?4 AND resolved_at IS NULL
+                       AND (?5 IS NULL OR producer_check_id = ?5 OR producer_check_id IS NULL)",
+                    params![
+                        project_id,
+                        env_key,
+                        check_id,
+                        target_relative_path,
+                        producer_rule
+                    ],
+                    |row| row.get::<_, u32>(0),
+                )?;
+                (count > 0).then_some(count)
+            } else {
+                None
+            };
             tx.execute(
                 &format!(
                     "UPDATE fix_attempts
-                     SET status = 'canceled', updated_at = ?6
+                     SET status = 'canceled', updated_at = ?7
                      WHERE project_id = ?1 AND env_url = ?2 AND check_id = ?3
                        AND target_kind = ?4
                        AND target_relative_path IS ?5
+                       AND target_line IS ?6
                        AND status IN ({})",
                     active_status_sql_list()
                 ),
@@ -227,15 +249,17 @@ impl Database {
                     check_id,
                     target_kind,
                     target_relative_path,
+                    target_line,
                     now_ms
                 ],
             )?;
             tx.execute(
                 "INSERT INTO fix_attempts (
                     project_id, env_url, check_id, producer_rule, target_kind,
-                    target_relative_path, target_line, agent_tool, status,
+                    target_relative_path, target_line, target_occurrence_count,
+                    agent_tool, status,
                     created_at, updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'briefed', ?9, ?9)",
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'briefed', ?10, ?10)",
                 params![
                     project_id,
                     env_key,
@@ -244,6 +268,7 @@ impl Database {
                     target_kind,
                     target_relative_path,
                     target_line,
+                    target_occurrence_count,
                     agent_tool,
                     now_ms
                 ],
@@ -375,7 +400,7 @@ impl Database {
         })?
     }
 
-    /// Most recent attempt for one issue regardless of status (latest by id).
+    /// Most recent attempt for one canonical issue regardless of target or status.
     #[tracing::instrument(skip(self, env_url), fields(project_id, check_id = %check_id))]
     pub fn get_latest_fix_attempt(
         &self,
@@ -383,23 +408,71 @@ impl Database {
         env_url: &str,
         check_id: &str,
     ) -> Result<Option<FixAttemptRow>, DbError> {
+        self.get_latest_fix_attempt_matching(project_id, env_url, check_id, None)
+    }
+
+    /// Most recent attempt for one exact group or code occurrence target.
+    pub fn get_latest_fix_attempt_for_target(
+        &self,
+        project_id: i64,
+        env_url: &str,
+        check_id: &str,
+        target: FixAttemptTarget,
+    ) -> Result<Option<FixAttemptRow>, DbError> {
+        self.get_latest_fix_attempt_matching(project_id, env_url, check_id, Some(target))
+    }
+
+    fn get_latest_fix_attempt_matching(
+        &self,
+        project_id: i64,
+        env_url: &str,
+        check_id: &str,
+        target: Option<FixAttemptTarget>,
+    ) -> Result<Option<FixAttemptRow>, DbError> {
         let env_key = normalize_env_url(Some(env_url));
         if env_key.is_empty() {
             return Ok(None);
         }
         let check_id = check_id.to_string();
+        let target =
+            target.map(|target| (target.kind().to_string(), target.relative_path, target.line));
         self.execute(move |conn| {
-            conn.query_row(
-                &format!(
-                    "SELECT {} FROM fix_attempts
-                     WHERE project_id = ?1 AND env_url = ?2 AND check_id = ?3
-                     ORDER BY id DESC LIMIT 1",
-                    FIX_ATTEMPT_COLUMNS
-                ),
-                params![project_id, env_key, check_id],
-                row_to_attempt,
-            )
-            .optional()
+            match target {
+                Some((target_kind, target_relative_path, target_line)) => conn
+                    .query_row(
+                        &format!(
+                            "SELECT {} FROM fix_attempts
+                             WHERE project_id = ?1 AND env_url = ?2 AND check_id = ?3
+                               AND target_kind = ?4
+                               AND target_relative_path IS ?5
+                               AND target_line IS ?6
+                             ORDER BY id DESC LIMIT 1",
+                            FIX_ATTEMPT_COLUMNS
+                        ),
+                        params![
+                            project_id,
+                            env_key,
+                            check_id,
+                            target_kind,
+                            target_relative_path,
+                            target_line
+                        ],
+                        row_to_attempt,
+                    )
+                    .optional(),
+                None => conn
+                    .query_row(
+                        &format!(
+                            "SELECT {} FROM fix_attempts
+                             WHERE project_id = ?1 AND env_url = ?2 AND check_id = ?3
+                             ORDER BY id DESC LIMIT 1",
+                            FIX_ATTEMPT_COLUMNS
+                        ),
+                        params![project_id, env_key, check_id],
+                        row_to_attempt,
+                    )
+                    .optional(),
+            }
             .map_err(DbError::from)
         })?
     }
@@ -468,7 +541,7 @@ impl Database {
         })?
     }
 
-    /// Whether a fix attempt's canonical group or stable-path occurrence remains active.
+    /// Whether an exact canonical group or reported path and line remains active.
     #[tracing::instrument(skip(self, env_url, target_relative_path), fields(project_id, check_id = %check_id, target_kind = %target_kind))]
     pub fn is_fix_attempt_target_active(
         &self,
@@ -477,38 +550,93 @@ impl Database {
         check_id: &str,
         target_kind: &str,
         target_relative_path: Option<&str>,
-        _target_line: Option<u32>,
+        target_line: Option<u32>,
+    ) -> Result<bool, DbError> {
+        self.fix_attempt_target_active(
+            project_id,
+            env_url,
+            check_id,
+            target_kind,
+            target_relative_path,
+            target_line,
+            None,
+            None,
+        )
+    }
+
+    /// Whether the stored target remains active after accounting for line movement.
+    pub fn is_fix_attempt_active(&self, attempt: &FixAttemptRow) -> Result<bool, DbError> {
+        self.fix_attempt_target_active(
+            attempt.project_id,
+            &attempt.env_url,
+            &attempt.check_id,
+            &attempt.target_kind,
+            attempt.target_relative_path.as_deref(),
+            attempt.target_line,
+            attempt.producer_rule.as_deref(),
+            attempt.target_occurrence_count,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn fix_attempt_target_active(
+        &self,
+        project_id: i64,
+        env_url: &str,
+        check_id: &str,
+        target_kind: &str,
+        target_relative_path: Option<&str>,
+        target_line: Option<u32>,
+        producer_rule: Option<&str>,
+        target_occurrence_count: Option<u32>,
     ) -> Result<bool, DbError> {
         let env_key = normalize_env_url(Some(env_url));
         crate::core::code_scan::validate_canonical_check_id(check_id).map_err(DbError::Other)?;
         let check_id = check_id.to_string();
         let target_kind = target_kind.to_string();
         let target_relative_path = target_relative_path.map(str::to_string);
+        let producer_rule = producer_rule.map(str::to_string);
         self.execute(move |conn| {
-            conn.query_row(
-                "SELECT EXISTS(
-                    SELECT 1 FROM work_items
-                    WHERE project_id = ?1 AND env_url = ?2
-                      AND check_id = ?3
-                      AND (
-                        ?4 = 'group'
-                        OR (
-                          ?4 = 'occurrence'
-                          AND relative_path = ?5
-                        )
-                      )
-                      AND resolved_at IS NULL
-                 )",
+            if target_kind == "group" {
+                return conn
+                    .query_row(
+                        "SELECT EXISTS(
+                            SELECT 1 FROM work_items
+                            WHERE project_id = ?1 AND env_url = ?2
+                              AND check_id = ?3 AND resolved_at IS NULL
+                         )",
+                        params![project_id, env_key, check_id],
+                        |row| row.get::<_, bool>(0),
+                    )
+                    .map_err(DbError::from);
+            }
+            let (exact_line_active, active_count) = conn.query_row(
+                "SELECT
+                    EXISTS(
+                        SELECT 1 FROM work_items
+                        WHERE project_id = ?1 AND env_url = ?2 AND check_id = ?3
+                          AND source = 'code_scan' AND relative_path = ?4
+                          AND line IS ?6 AND resolved_at IS NULL
+                          AND (?5 IS NULL OR producer_check_id = ?5 OR producer_check_id IS NULL)
+                    ),
+                    COUNT(*)
+                 FROM work_items
+                 WHERE project_id = ?1 AND env_url = ?2 AND check_id = ?3
+                   AND source = 'code_scan' AND relative_path = ?4 AND resolved_at IS NULL
+                   AND (?5 IS NULL OR producer_check_id = ?5 OR producer_check_id IS NULL)",
                 params![
                     project_id,
                     env_key,
                     check_id,
-                    target_kind,
-                    target_relative_path
+                    target_relative_path,
+                    producer_rule,
+                    target_line
                 ],
-                |row| row.get::<_, bool>(0),
-            )
-            .map_err(DbError::from)
+                |row| Ok((row.get::<_, bool>(0)?, row.get::<_, u32>(1)?)),
+            )?;
+            Ok(exact_line_active
+                || target_occurrence_count
+                    .is_some_and(|initial_count| active_count >= initial_count))
         })?
     }
 

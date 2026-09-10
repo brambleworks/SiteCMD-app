@@ -1,6 +1,20 @@
 import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 
+export function canRequestVerification(database, id, projectId) {
+  if (!Number.isSafeInteger(id) || id <= 0) return false;
+  const db = new DatabaseSync(database, { readOnly: true });
+  try {
+    const row = db.prepare("SELECT project_id, status FROM fix_attempts WHERE id = ?").get(id);
+    if (!row) return false;
+    if (row.project_id !== projectId)
+      throw new Error("Verification must refer to this trial's project");
+    return ["briefed", "verify_requested"].includes(row.status);
+  } finally {
+    db.close();
+  }
+}
+
 export function readFix(database, id) {
   const db = new DatabaseSync(database, { readOnly: true });
   try {

@@ -12,7 +12,7 @@ export function caseFiles(item, reference = false) {
     ...item.files,
     ...(reference ? item.reference : {}),
     ...tests.files,
-    "README.md": `# Application contract\n\n${item.requirements}\n\nRun the existing tests with \`${tests.command}\`.\n\nThis is an owned, seeded calibration repository, not a production application.\n`,
+    "README.md": `# Application contract\n\n${item.requirements}\n\nRun the existing tests with \`${tests.command}\`.\n\nSubmit only changes needed for the task. Snapshots include untracked and binary files; leave generated caches out of the source tree. Do not modify this contract or the existing tests.\n\nThis is an owned, seeded calibration repository, not a production application.\n`,
   };
   for (const name of Object.keys(files)) {
     if (
@@ -43,7 +43,7 @@ function publicTest(item) {
       ? `        with tempfile.TemporaryDirectory() as root:\n            Path(root, 'readme.txt').write_text('Hello')\n            self.assertEqual(app.download(root, SimpleNamespace(args={'path': 'readme.txt'})), 'Hello')\n`
       : `        connection = sqlite3.connect(':memory:')\n        connection.execute('CREATE TABLE users (id INTEGER, name TEXT)')\n        connection.execute('INSERT INTO users VALUES (?, ?)', (1, 'alice'))\n        self.assertEqual(app.lookup(connection, SimpleNamespace(args={'name': 'alice'})), [(1, 'alice')])\n`;
   return {
-    command: "python3 -m unittest discover -s app/api",
+    command: "python3 -B -m unittest discover -s app/api",
     files: {
       "app/api/test_contract.py": `import importlib.util\nfrom pathlib import Path\nimport sqlite3\nimport tempfile\nfrom types import SimpleNamespace\nimport unittest\n\nspec = importlib.util.spec_from_file_location('app', Path(__file__).with_name('${path.basename(item.entry)}'))\napp = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(app)\n\nclass ContractTest(unittest.TestCase):\n    def test_existing_behavior(self):\n${body}`,
     },

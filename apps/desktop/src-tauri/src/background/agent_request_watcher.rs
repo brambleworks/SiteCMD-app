@@ -13,7 +13,7 @@ use crate::core::fix_brief::BriefLocation;
 use crate::core::scan_control::ScanControlState;
 use crate::core::scan_execution::{ScanExecutionMode, ScanTrigger};
 use crate::core::scanner::ScanType;
-use crate::db::{normalize_env_url, AgentRequestRow, Database};
+use crate::db::{normalize_env_url, AgentRequestRow, Database, FixAttemptTarget};
 
 /// Failure detail for a row whose claim did not survive the process restart.
 pub(crate) const ORPHANED_REQUEST_DETAIL: &str = "app_restarted";
@@ -168,8 +168,12 @@ pub(crate) fn fulfil_start_fix(
             reason: "Code Scan occurrence".to_string(),
         }]
     });
+    let attempt_target = match code_locations.as_deref() {
+        Some([location]) => FixAttemptTarget::occurrence(location.path.clone(), location.line),
+        _ => FixAttemptTarget::group(),
+    };
     let previous_failure = db
-        .get_latest_fix_attempt(request.project_id, &env_url, &check_id)
+        .get_latest_fix_attempt_for_target(request.project_id, &env_url, &check_id, attempt_target)
         .map_err(|error| error.to_string())?
         .filter(|attempt| attempt.status == "verify_failed")
         .and_then(|attempt| attempt.failure_detail);
