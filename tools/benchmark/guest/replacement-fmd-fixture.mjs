@@ -1,4 +1,10 @@
-import { createCipheriv, generateKeyPairSync, publicEncrypt, randomBytes } from "node:crypto";
+import {
+  createCipheriv,
+  generateKeyPairSync,
+  publicEncrypt,
+  randomBytes,
+  randomInt,
+} from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { inflateSync } from "node:zlib";
@@ -145,11 +151,11 @@ export function createFmdFixture(baselineDirectory) {
     mapSpatialDistanceLimit: 0.004,
     mapPersistenceHistogramLimit: 0.00005,
     mapPersistenceSpatialLimit: 0.00005,
-    mapSampleOffset: 1 + (randomBytes(1)[0] % 7),
-    mapGridPhaseX: 1 + (randomBytes(1)[0] % 7),
-    mapGridPhaseY: 1 + (randomBytes(1)[0] % 7),
-    markerHitOffsetX: (randomBytes(1)[0] % 5) - 2,
-    markerHitOffsetY: 10 + (randomBytes(1)[0] % 3),
+    mapSampleOffset: randomInt(1, 8),
+    mapGridPhaseX: randomInt(1, 8),
+    mapGridPhaseY: randomInt(1, 8),
+    markerHitOffsetX: randomInt(-2, 3),
+    markerHitOffsetY: randomInt(10, 13),
     markerMaterialDeltaThreshold: 16,
     markerMaterialPixelLimit: 4,
     markerTotalDifferenceLimit: 256,

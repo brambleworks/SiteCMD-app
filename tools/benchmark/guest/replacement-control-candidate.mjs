@@ -33,6 +33,7 @@ function inspectCandidate(targetPath) {
         throw new Error(`Control candidate contains an unsupported entry: ${name}`);
       }
       const before = lstatSync(candidate);
+      // codeql-allow: js/file-system-race
       const handle = openSync(
         candidate,
         constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,

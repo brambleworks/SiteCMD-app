@@ -43,6 +43,7 @@ export function fmdReferenceTreeDigest(directory) {
     if (!metadata.isFile() || metadata.nlink !== 1) {
       throw new Error(`FMD reference runtime contains an unsupported entry: ${name}`);
     }
+    // codeql-allow: js/file-system-race
     const handle = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
       const opened = fstatSync(handle);
@@ -50,6 +51,7 @@ export function fmdReferenceTreeDigest(directory) {
         !opened.isFile() ||
         opened.nlink !== 1 ||
         opened.ino !== metadata.ino ||
+        opened.dev !== metadata.dev ||
         opened.uid !== 0 ||
         opened.mode & 0o022
       ) {

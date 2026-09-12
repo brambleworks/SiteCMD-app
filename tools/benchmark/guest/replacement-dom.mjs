@@ -1,13 +1,21 @@
+const namedEntities = new Map([
+  ["amp", "&"],
+  ["gt", ">"],
+  ["lt", "<"],
+  ["nbsp", "\u00a0"],
+  ["quot", '"'],
+]);
+
 function decodeEntities(value) {
-  return String(value)
-    .replace(/&#(\d+);/g, (_match, code) => String.fromCodePoint(Number(code)))
-    .replace(/&#x([a-f0-9]+);/gi, (_match, code) => String.fromCodePoint(Number.parseInt(code, 16)))
-    .replaceAll("&lt;", "<")
-    .replaceAll("&gt;", ">")
-    .replaceAll("&quot;", '"')
-    .replaceAll("&#39;", "'")
-    .replaceAll("&amp;", "&")
-    .replaceAll("&nbsp;", "\u00a0");
+  return String(value).replace(
+    /&#([0-9]+);|&#x([a-f0-9]+);|&(amp|gt|lt|nbsp|quot);/gi,
+    (_match, decimal, hexadecimal, name) => {
+      if (name) return namedEntities.get(name.toLowerCase());
+      const codePoint = Number.parseInt(decimal ?? hexadecimal, decimal ? 10 : 16);
+      if (codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)) return "\ufffd";
+      return String.fromCodePoint(codePoint);
+    },
+  );
 }
 
 function activeMarkup(value) {
@@ -16,13 +24,75 @@ function activeMarkup(value) {
   );
 }
 
+function tokenizeHtml(value) {
+  const html = String(value);
+  const tokens = [];
+  let cursor = 0;
+  while (cursor < html.length) {
+    let opening = html.indexOf("<", cursor);
+    while (opening >= 0 && !/[a-z!/?]/i.test(html[opening + 1] ?? "")) {
+      opening = html.indexOf("<", opening + 1);
+    }
+    if (opening < 0) {
+      tokens.push({ tag: false, value: html.slice(cursor) });
+      break;
+    }
+    if (opening > cursor) tokens.push({ tag: false, value: html.slice(cursor, opening) });
+    let quote = null;
+    let closing = -1;
+    for (let index = opening + 1; index < html.length; index += 1) {
+      const character = html[index];
+      if (quote) {
+        if (character === quote) quote = null;
+      } else if (character === '"' || character === "'") {
+        quote = character;
+      } else if (character === ">") {
+        closing = index;
+        break;
+      }
+    }
+    if (closing < 0) {
+      tokens.push({ tag: false, value: html.slice(opening) });
+      break;
+    }
+    tokens.push({ tag: true, value: html.slice(opening, closing + 1) });
+    cursor = closing + 1;
+  }
+  return tokens;
+}
+
+const blockTags = new Set([
+  "article",
+  "blockquote",
+  "div",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "li",
+  "p",
+  "pre",
+  "section",
+  "tr",
+]);
+
 function renderedText(value) {
-  return decodeEntities(
-    String(value)
-      .replace(/<\s*br\s*\/?>/gi, "\n")
-      .replace(/<\s*\/\s*(?:p|div|li|tr|h[1-6]|blockquote|section|article|pre)\s*>/gi, "\n")
-      .replace(/<[^>]*>/g, ""),
-  );
+  const parts = [];
+  for (const token of tokenizeHtml(value)) {
+    if (!token.tag) {
+      parts.push(decodeEntities(token.value));
+      continue;
+    }
+    if (/^<\s*br\b[^>]*\/?>$/i.test(token.value)) {
+      parts.push("\n");
+      continue;
+    }
+    const closing = /^<\s*\/\s*([a-z0-9-]+)\s*>$/i.exec(token.value);
+    if (closing && blockTags.has(closing[1].toLowerCase())) parts.push("\n");
+  }
+  return parts.join("");
 }
 
 function escapeHtml(value) {
@@ -371,29 +441,40 @@ export class DocumentFixture {
 function parseIntoDocument(html) {
   const document = new DocumentFixture();
   document.body.childNodes = [];
-  const sanitized = String(html).replace(
-    /<\s*(script|style|noscript|head|template)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi,
-    "",
-  );
+  document.body.children = document.body.childNodes;
   const stack = [document.body];
-  const tokens = sanitized.match(/<[^>]*>|[^<]+/g) ?? [];
+  const excludedTags = new Set(["head", "noscript", "script", "style", "template"]);
+  const excluded = [];
   const voidTags = new Set(["br", "img", "hr", "meta", "link", "input"]);
-  for (const token of tokens) {
-    if (!token.startsWith("<")) {
-      stack.at(-1).appendChild(document.createTextNode(decodeEntities(token)));
+  for (const token of tokenizeHtml(html)) {
+    if (!token.tag) {
+      if (excluded.length === 0) {
+        stack.at(-1).appendChild(document.createTextNode(decodeEntities(token.value)));
+      }
       continue;
     }
-    const close = /^<\s*\/\s*([a-z0-9-]+)/i.exec(token);
+    const close = /^<\s*\/\s*([a-z0-9-]+)/i.exec(token.value);
+    const open = /^<\s*([a-z0-9-]+)/i.exec(token.value);
+    if (excluded.length > 0) {
+      if (close?.[1].toLowerCase() === excluded.at(-1)) excluded.pop();
+      else if (open && excludedTags.has(open[1].toLowerCase()) && !token.value.endsWith("/>")) {
+        excluded.push(open[1].toLowerCase());
+      }
+      continue;
+    }
     if (close) {
       if (stack.length > 1) stack.pop();
       continue;
     }
-    const open = /^<\s*([a-z0-9-]+)/i.exec(token);
     if (!open) continue;
     const tag = open[1].toLowerCase();
+    if (excludedTags.has(tag)) {
+      if (!token.value.endsWith("/>")) excluded.push(tag);
+      continue;
+    }
     const element = document.createElement(tag);
     stack.at(-1).appendChild(element);
-    if (!voidTags.has(tag) && !token.endsWith("/>")) stack.push(element);
+    if (!voidTags.has(tag) && !token.value.endsWith("/>")) stack.push(element);
   }
   document.active = false;
   document.innerHTMLWrites = [];

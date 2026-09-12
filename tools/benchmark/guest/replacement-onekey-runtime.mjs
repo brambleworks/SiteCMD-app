@@ -49,6 +49,7 @@ export function onekeyRuntimeTreeDigest(directory) {
     if (!metadata.isFile() || metadata.nlink !== 1) {
       throw new Error(`Unsupported OneKey runtime entry: ${name}`);
     }
+    // codeql-allow: js/file-system-race
     const handle = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
       const opened = fstatSync(handle);
@@ -56,6 +57,7 @@ export function onekeyRuntimeTreeDigest(directory) {
         !opened.isFile() ||
         opened.nlink !== 1 ||
         opened.ino !== metadata.ino ||
+        opened.dev !== metadata.dev ||
         opened.uid !== 0 ||
         opened.mode & 0o022
       ) {

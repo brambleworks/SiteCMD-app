@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { replacementCaseDefinition } from "./replacement-cases.mjs";
@@ -55,11 +55,19 @@ function readCaseFiles(files) {
       if (!resolved.startsWith(`${workDirectory}/`)) {
         throw new Error("Replacement grader source symlink escaped the candidate repository");
       }
-      const metadata = statSync(resolved);
-      if (!metadata.isFile() || metadata.size > maximumSourceBytes) {
-        throw new Error("Replacement grader source is not a supported regular file");
+      const handle = openSync(
+        resolved,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      );
+      try {
+        const metadata = fstatSync(handle);
+        if (!metadata.isFile() || metadata.size > maximumSourceBytes) {
+          throw new Error("Replacement grader source is not a supported regular file");
+        }
+        return [file, readFileSync(handle, "utf8")];
+      } finally {
+        closeSync(handle);
       }
-      return [file, readFileSync(resolved, "utf8")];
     }),
   );
 }
